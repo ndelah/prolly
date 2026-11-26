@@ -52,6 +52,19 @@ shared/               code shared by every part (DOM helpers, templates, theme, 
 popup/                toolbar popup
 options/              settings page (Library, Appearance, Shortcut & sites, Sync & backup)
 icons/                toolbar icons
+scripts/release.sh    builds a versioned release ZIP
+releases/             one ZIP per version (prolly-<version>.zip), with a .sha256 checksum
+CHANGELOG.md          what changed in each version
 ```
+
+## Releases
+
+Each version is zipped into `releases/` and kept there. The ZIP is the file to upload to the Chrome Web Store.
+
+1. Raise `"version"` in `manifest.json` (for example `1.0.1`).
+2. Add a `## 1.0.1` section to `CHANGELOG.md`.
+3. Run `scripts/release.sh`.
+
+The script takes the name and version from `manifest.json`. It refuses to overwrite an existing version unless you pass `--force`, and it stops if the changelog has no entry for the version. It checks the code's syntax, zips only the files the extension runs, makes sure every file the manifest points to is in the ZIP, and writes a SHA-256 checksum next to it.
 
 The overlay runs in a closed shadow root and builds its DOM without `innerHTML`, so page styles, page CSP and Trusted Types don't affect it.

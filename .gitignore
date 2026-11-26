@@ -2,3 +2,6 @@
 *.zip
 dist/
 node_modules/
+
+# Versioned releases are kept in the repo
+!releases/*.zip
