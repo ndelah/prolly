@@ -2,6 +2,15 @@
 
 Each release is built with `scripts/release.sh` into `releases/prolly-<version>.zip` (Chrome) and `releases/prolly-<version>-firefox.zip` (Firefox).
 
+## Unreleased
+
+- Google Drive sync (Settings → Sync & backup → Connect Google Drive):
+  - One Markdown file per prompt, in a visible "Prolly" folder in My Drive, with access only to the files Prolly creates.
+  - No 100 KB limit, and the same library in Chrome and Firefox.
+  - Syncs a few seconds after an edit and every 5 minutes, merging changes from both sides.
+  - Needs a Google OAuth client ID in `shared/drive.js` (README → "Google Drive setup").
+- New permissions: `identity` (Google sign-in) and `alarms` (checking Drive every 5 minutes). Neither shows a warning at install.
+
 ## 1.1.0 — 2026-11-26
 
 - Firefox (140 or later, desktop). Same features as in Chrome, with Firefox Sync in place of Chrome sync. `scripts/build.sh firefox` makes a build to load in `about:debugging`, and `scripts/release.sh` now also builds `prolly-<version>-firefox.zip` for addons.mozilla.org.

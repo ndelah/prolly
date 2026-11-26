@@ -2,7 +2,7 @@
 
 Website and live demo: https://prolly.delahousse.xyz
 
-A browser extension (Manifest V3) for Chrome and Firefox that keeps your prompts one shortcut away in ChatGPT, Claude, Gemini and any other site you add. No account, no server: prompts live in your browser and, if you want, in its sync (Chrome sync or Firefox Sync).
+A browser extension (Manifest V3) for Chrome and Firefox that keeps your prompts one shortcut away in ChatGPT, Claude, Gemini and any other site you add. No account, no server: prompts live in your browser and, if you want, in its sync (Chrome sync or Firefox Sync) or in your own Google Drive.
 
 ## Install (unpacked)
 
@@ -43,7 +43,44 @@ Tabs that were already open on chatgpt.com, claude.ai or gemini.google.com get t
 
 - **Appearance:** Light, Dark or System theme; six accent colours or any hex value; live preview.
 - **Shortcut & sites:** record a new shortcut; turn the `;;` trigger on or off; turn sites on or off.
-- **Sync & backup:** browser sync on or off, with a usage meter; JSON export and import (import merges, newer edit wins).
+- **Sync & backup:** browser sync on or off, with a usage meter; Google Drive sync; JSON export and import (import merges, newer edit wins).
+
+## Google Drive sync
+
+**Connect Google Drive** (Settings → Sync & backup) keeps one Markdown file per prompt in a visible **Prolly** folder in My Drive. There's no 100 KB limit, and the same library works in Chrome and Firefox. People can open their own files, and Google Drive for desktop copies the folder onto the computer (`~/Library/CloudStorage/GoogleDrive-…/My Drive/Prolly` on a Mac, `G:\My Drive\Prolly` on Windows), where other tools can read it.
+
+```
+---
+id: "lq3k9x2abc"
+title: "Code review"
+folder: "Dev"
+tags: ["review","code"]
+updated: "2026-11-26T10:00:00.000Z"
+---
+Review this #language# code for bugs…
+```
+
+- **Permission:** only `drive.file`, which covers the files Prolly creates and nothing else in the Drive. One catch: a new `.md` file added to the folder by hand or by another tool is invisible to Prolly. Edits to files Prolly created come through.
+- **When it syncs:** a few seconds after an edit, every 5 minutes, and when Settings opens. Drive can't notify an extension without a server, so Prolly checks. Browser sync is turned off on that computer while Drive is connected.
+- **Two-way merge** (`shared/filesync.js`):
+  - A change on one side is copied to the other.
+  - Edited on both: the newer edit wins and the other becomes "Title (copy)".
+  - Deleted on one side but edited on the other: the edit wins.
+  - Deleted prompts go to the Drive bin.
+  - If many prompts vanish from the folder at once, sync pauses and asks.
+  - The starter prompts on a second computer are matched to the ones already in Drive, not duplicated.
+- **Disconnect** forgets the account on that computer only. It doesn't revoke Google's permission, which would also sign out every other computer.
+
+### Google Drive setup (developer, once)
+
+1. In [Google Cloud console](https://console.cloud.google.com/), create a project and enable the **Google Drive API**.
+2. Configure the **OAuth consent screen**: External, add the scope `https://www.googleapis.com/auth/drive.file`. It's a non-sensitive scope, so it needs Google's brand verification (app name, logo, privacy policy) but not the paid security assessment.
+3. Create **Credentials → OAuth client ID → Web application**. Under **Authorized redirect URIs**, add the URL shown in Settings → Sync & backup for each browser:
+   - Chrome: `https://<extension-id>.chromiumapp.org/`. An unpacked copy has a different ID from the Web Store one, so register both, or pin the ID with a `key` in the manifest.
+   - Firefox: `https://<hash>.extensions.allizom.org/`. It stays the same because the add-on ID is fixed.
+4. Put the client ID in `CLIENT_ID` at the top of `shared/drive.js`.
+
+Sign-in uses `identity.launchWebAuthFlow` (Chrome and Firefox) with Google's token flow. Tokens last an hour. Prolly then gets a new one without showing anything, and only asks the person to sign in again if Google requires it.
 
 ## Things to know
 
@@ -52,15 +89,19 @@ Tabs that were already open on chatgpt.com, claude.ai or gemini.google.com get t
 - **Very long prompts** may be turned into an attachment by Claude or ChatGPT when pasted. That is the site's behaviour, not the extension's.
 - The picker only opens while the cursor is in a text box on a site where Prolly is on. If a site uses Ctrl + ; itself, give that site its own shortcut or use `;;`.
 - **In Firefox, prompts sync only if Add-ons is ticked** in Settings → Sync. Chrome and Firefox don't share a sync: use JSON export and import to move a library between them.
-- "Connect Google Drive" is shown as a later option and does nothing yet.
+- "Connect Google Drive" needs a Google OAuth client ID in the build (see "Google Drive setup"). Without one, Settings shows "Setup needed" and the redirect URL to register.
 
 ## Files
 
 ```
 manifest.json         MV3 manifest (Chrome); the Firefox one is generated from it
-background.js         background script: custom sites, conflict copies, first-run starter prompts
+background.js         background script: custom sites, conflict copies, Google Drive sync, first-run starter prompts
 content/content.js    runs in chat pages: shortcut, picker, insertion, pick-a-text-area mode
 shared/               code shared by every part (DOM helpers, templates, theme, storage, UI)
+shared/mdfile.js      a prompt as a Markdown file (front matter + text), file names
+shared/filesync.js    two-way sync with any folder of files (Google Drive now, GitHub later)
+shared/drive.js       Google Drive sign-in and file access
+test/                 node --test test/*.test.mjs (Markdown format and sync, against an in-memory folder)
 popup/                toolbar popup
 options/              settings page (Library, Appearance, Shortcut & sites, Sync & backup)
 icons/                toolbar icons

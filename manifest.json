@@ -23,7 +23,7 @@
     "service_worker": "background.js"
   },
   "options_page": "options/options.html",
-  "permissions": ["storage", "scripting", "activeTab"],
+  "permissions": ["storage", "scripting", "activeTab", "identity", "alarms"],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://claude.ai/*",

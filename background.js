@@ -1,8 +1,9 @@
 // Background script: registers the content script on sites you add, finishes "Use Prolly on this site",
-// keeps a copy of a prompt edited on two computers at once, and seeds starter prompts on install.
+// keeps a copy of a prompt edited on two computers at once, syncs with Google Drive, and seeds starter
+// prompts on install.
 // Chrome runs it as a service worker and loads the shared files here. Firefox runs it as an event page
 // and its manifest lists the shared files before this one (see scripts/firefox-manifest.js).
-if (typeof importScripts === 'function') importScripts('shared/core.js', 'shared/template.js', 'shared/store.js');
+if (typeof importScripts === 'function') importScripts('shared/core.js', 'shared/template.js', 'shared/store.js', 'shared/mdfile.js', 'shared/filesync.js', 'shared/drive.js');
 const PM = self.PM;
 
 const CONTENT_JS = [
@@ -129,11 +130,78 @@ async function reconcile() {
 }
 let recTimer = 0;
 
+// ---------- Google Drive ----------
+// While Drive is connected, browser sync is off: the library lives in storage.local and this copies
+// changes both ways with the Prolly folder (shared/filesync.js). It runs a few seconds after an edit,
+// every 5 minutes, and when the settings page asks.
+const DRIVE_ALARM = 'pm-drive';
+// After these, only a click on the settings page tries again.
+const DRIVE_WAITS_FOR_USER = ['FOLDER_GONE', 'MASS_DELETE', 'SCOPE', 'SETUP'];
+const library = {
+  load: () => PM.store.loadPrompts(),
+  save: (list) => PM.store.savePrompts(list, { keepMeta: true }),
+  remove: (id) => PM.store.deletePrompt(id)
+};
+
+async function driveSync(opts) {
+  opts = opts || {};
+  const st = await PM.drive.getState();
+  if (!st.connected) return st;
+  if (opts.auto && st.lastError && DRIVE_WAITS_FOR_USER.indexOf(st.lastError.code) >= 0) return st;
+  // Edits made on this computer before Drive was connected may still be in browser sync.
+  if (await PM.store.syncOn()) await PM.store.setSyncOn(false);
+  try {
+    const res = await PM.fileSync.run({ provider: PM.drive.provider(st.folderId), local: library, state: st, localOnly: opts.localOnly, massDelete: opts.massDelete });
+    if (res.skipped) return st;
+    return PM.drive.setState({ files: res.state.files, lastSync: Date.now(), lastError: null, lastStats: res.stats });
+  } catch (e) {
+    console.warn('[Prolly] Google Drive sync:', e);
+    const patch = { lastError: { code: e.code || 'ERROR', message: (e && e.message) || String(e), count: e.count || 0, at: Date.now() } };
+    if (e.state) patch.files = e.state.files;
+    return PM.drive.setState(patch);
+  }
+}
+
+async function driveAlarm() {
+  const st = await PM.drive.getState();
+  if (!st.connected) return ext.alarms.clear(DRIVE_ALARM);
+  if (!(await ext.alarms.get(DRIVE_ALARM))) await ext.alarms.create(DRIVE_ALARM, { periodInMinutes: 5 });
+}
+ext.alarms.onAlarm.addListener((a) => {
+  if (a.name === DRIVE_ALARM) serial(() => driveSync({ auto: true }));
+});
+
+async function driveCommand(msg) {
+  switch (msg.op) {
+    case 'connected': // the settings page finished signing in
+      await driveAlarm();
+      return driveSync();
+    case 'sync':
+      return driveSync();
+    case 'resolve': // after MASS_DELETE: 'restore' or 'apply'
+      return driveSync({ massDelete: msg.choice === 'apply' ? 'apply' : 'restore' });
+    case 'newFolder':
+      await PM.drive.newFolder();
+      return driveSync();
+    case 'disconnect':
+      await PM.drive.disconnect();
+      await driveAlarm();
+      return PM.drive.getState();
+  }
+  return PM.drive.getState();
+}
+
+let driveTimer = 0;
 ext.storage.onChanged.addListener((changes, area) => {
   if (changes.settings || changes._sync) serial(syncContentScripts);
   if (area === 'sync' && Object.keys(changes).some((k) => k.slice(0, 2) === 'p.')) {
     clearTimeout(recTimer);
     recTimer = setTimeout(() => serial(reconcile), 1500);
+  }
+  // Includes the sync's own writes: those find nothing to do and make no request (localOnly).
+  if (area === 'local' && Object.keys(changes).some((k) => k.slice(0, 2) === 'p.')) {
+    clearTimeout(driveTimer);
+    driveTimer = setTimeout(() => serial(() => driveSync({ localOnly: true, auto: true })), 2000);
   }
 });
 
@@ -149,6 +217,10 @@ ext.runtime.onMessage.addListener((msg, sender, respond) => {
       await ext.storage.local.remove('_pendingSite');
       await enableSite(msg);
     }).then(() => respond({ ok: true }));
+    return true;
+  }
+  if (msg.type === 'pm:drive') {
+    serial(() => driveCommand(msg)).then((state) => respond({ ok: true, state }));
     return true;
   }
   if (msg.type === 'pm:inject' && typeof msg.tabId === 'number') {
@@ -175,9 +247,15 @@ ext.runtime.onInstalled.addListener((details) =>
       if (!existing.length) await PM.store.savePrompts(SEED);
     }
     await syncContentScripts();
+    await driveAlarm();
     // Start in tabs that were already open.
     const tabs = await ext.tabs.query({ url: BUILTIN_URLS });
     for (const t of tabs) await injectInto(t.id);
     if (details.reason === 'install') ext.tabs.create({ url: ext.runtime.getURL('options/options.html#library') });
   }));
-ext.runtime.onStartup.addListener(() => serial(syncContentScripts));
+ext.runtime.onStartup.addListener(() =>
+  serial(async () => {
+    await syncContentScripts();
+    await driveAlarm();
+    await driveSync({ auto: true });
+  }));

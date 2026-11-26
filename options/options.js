@@ -16,7 +16,7 @@
     { id: 's3', title: 'Meeting notes → action items', folder: 'Ops', tags: ['meetings'], text: 'Turn the notes below into action items with an owner each.' }
   ];
 
-  const state = { settings: null, prompts: [], section: 'library', query: '', usage: null, sync: true, flash: null };
+  const state = { settings: null, prompts: [], section: 'library', query: '', usage: null, sync: true, drive: null, flash: null };
   let editor = null;
   let recording = null; // { siteHost | null, cleanup }
 
@@ -33,8 +33,8 @@
   };
 
   async function load() {
-    const [settings, prompts, usage, sync] = await Promise.all([PM.store.getSettings(), PM.store.loadPrompts(), PM.store.usage(), PM.store.syncOn()]);
-    Object.assign(state, { settings, prompts, usage, sync });
+    const [settings, prompts, usage, sync, drive] = await Promise.all([PM.store.getSettings(), PM.store.loadPrompts(), PM.store.usage(), PM.store.syncOn(), PM.drive.getState()]);
+    Object.assign(state, { settings, prompts, usage, sync, drive });
     document.getElementById('libCount').textContent = '· ' + prompts.length;
     document.documentElement.style.setProperty('--acc', settings.accent);
     PM.applyTheme(layer, settings);
@@ -405,39 +405,132 @@
       state.flash = null;
     }
     const n = state.prompts.length;
-    return [
-      h('h1', null, 'Sync & backup'),
-      h('section', { class: 'card' },
-        h('div', { class: 'row', style: { 'align-items': 'flex-start' } },
-          h('div', { class: 'grow', style: { gap: '4px' } },
-            h('div', { class: 'row', style: { gap: '8px' } }, h('h2', null, 'Sync with ' + PM.BROWSER), h('span', { class: 'pill free' }, 'Free')),
-            h('p', { class: 'sub', style: { 'max-width': '620px' } }, PM.isFirefox
+    const onDrive = !!(state.drive && state.drive.connected);
+    const browserCard = h('section', { class: 'card' },
+      h('div', { class: 'row', style: { 'align-items': 'flex-start' } },
+        h('div', { class: 'grow', style: { gap: '4px' } },
+          h('div', { class: 'row', style: { gap: '8px' } }, h('h2', null, 'Sync with ' + PM.BROWSER), onDrive ? null : h('span', { class: 'pill free' }, 'Free')),
+          h('p', { class: 'sub', style: { 'max-width': '620px' } }, onDrive
+            ? 'Off while Google Drive is connected: Drive syncs your prompts instead.'
+            : PM.isFirefox
               ? 'Your prompts follow your Mozilla account to every computer where you\'re signed in to Firefox with Add-ons turned on in Sync. Nothing to set up.'
               : 'Your prompts follow your Chrome profile to every computer where you\'re signed in to Chrome with sync on. Nothing to set up.')),
-          switchEl(state.sync, 'Sync with ' + PM.BROWSER, toggleSync)),
-        h('div', { class: 'grow', style: { gap: '8px' } },
-          h('div', { class: 'row', style: { 'justify-content': 'space-between', 'font-size': '13px' } },
-            h('span', null, h('b', null, n + (n === 1 ? ' prompt' : ' prompts')), ' · ' + PM.formatBytes(u.bytes) + ' of ' + PM.formatBytes(u.quota) + (state.sync ? '' : ' (this computer only)')),
-            h('span', { style: { color: 'var(--ok)' } }, lastEdit ? '✓ Saved · last edit ' + PM.timeAgo(lastEdit) : '')),
-          h('div', { class: 'meter' + (pct > 90 ? ' full' : '') }, h('div', { style: { width: pct + '%' } })),
-          h('p', { class: 'small' }, state.sync
+        onDrive ? null : switchEl(state.sync, 'Sync with ' + PM.BROWSER, toggleSync)),
+      h('div', { class: 'grow', style: { gap: '8px' } },
+        h('div', { class: 'row', style: { 'justify-content': 'space-between', 'font-size': '13px' } },
+          h('span', null, h('b', null, n + (n === 1 ? ' prompt' : ' prompts')), ' · ' + PM.formatBytes(u.bytes) + ' of ' + PM.formatBytes(u.quota) + (state.sync || onDrive ? '' : ' (this computer only)')),
+          h('span', { style: { color: 'var(--ok)' } }, lastEdit ? '✓ Saved · last edit ' + PM.timeAgo(lastEdit) : '')),
+        h('div', { class: 'meter' + (pct > 90 ? ' full' : '') }, h('div', { style: { width: pct + '%' } })),
+        h('p', { class: 'small' }, onDrive
+          ? 'Kept on this computer and in your Google Drive.'
+          : state.sync
             ? PM.BROWSER + ' gives each extension 100 KB of synced space — a few hundred typical prompts. Long prompts are split into pieces automatically.'
-            : 'Sync is off: prompts are kept on this computer only. Turn it on to copy them into ' + PM.SYNC_NAME + '.')),
-        h('div', { class: 'note' }, h('b', null, 'Edited on two computers?'), h('span', null, 'The latest edit wins, and the other version is kept as “Title (copy)” so nothing is lost.'))),
-      h('section', { class: 'card' },
-        h('div', { class: 'row' },
-          h('div', { class: 'grow' }, h('h2', null, 'Backup'), h('p', { class: 'sub' }, 'Save all prompts as one JSON file, or load a file to merge it into your library.')),
-          h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, 'Import…'),
-          h('button', { type: 'button', class: 'btn dark', onclick: exportJson }, 'Export JSON'),
-          file),
-        msg),
-      h('section', { class: 'card dashed' },
-        h('div', { class: 'row' },
-          h('div', { class: 'grow' },
-            h('div', { class: 'row', style: { gap: '8px' } }, h('h2', { style: { 'font-size': '14px' } }, 'Need more room?'), h('span', { class: 'pill later' }, 'Later')),
-            h('p', { class: 'sub' }, 'Sync through a hidden folder in your own Google Drive. Still free, far more space.')),
-          h('button', { type: 'button', class: 'btn', disabled: true }, 'Connect Google Drive')))
-    ];
+            : 'Sync is off: prompts are kept on this computer only. Turn it on to copy them into ' + PM.SYNC_NAME + ', or connect Google Drive below.')),
+      h('div', { class: 'note' }, h('b', null, 'Edited on two computers?'), h('span', null, 'The latest edit wins, and the other version is kept as “Title (copy)” so nothing is lost.')));
+    const backupCard = h('section', { class: 'card' },
+      h('div', { class: 'row' },
+        h('div', { class: 'grow' }, h('h2', null, 'Backup'), h('p', { class: 'sub' }, 'Save all prompts as one JSON file, or load a file to merge it into your library.')),
+        h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, 'Import…'),
+        h('button', { type: 'button', class: 'btn dark', onclick: exportJson }, 'Export JSON'),
+        file),
+      msg);
+    const driveCard = renderDrive();
+    return [h('h1', null, 'Sync & backup')].concat(onDrive ? [driveCard, browserCard, backupCard] : [browserCard, driveCard, backupCard]);
+  }
+
+  // ---------- Google Drive ----------
+  // Signing in happens here (it needs the click); syncing happens in the background script.
+  const driveCmd = async (op, extra) => {
+    const r = await ext.runtime.sendMessage(Object.assign({ type: 'pm:drive', op }, extra || {}));
+    if (r && r.state) state.drive = r.state;
+  };
+
+  function renderDrive() {
+    const d = state.drive || { connected: false };
+    const msg = h('p', { class: 'small', role: 'status' });
+    // A button that shows it is working, then re-renders; fn may return 'cancel' to do nothing.
+    const act = (label, busyLabel, fn, cls) => {
+      const b = h('button', { type: 'button', class: 'btn' + (cls ? ' ' + cls : '') }, label);
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        b.textContent = busyLabel;
+        try {
+          if ((await fn()) !== 'cancel') return refresh();
+        } catch (e) {
+          msg.className = 'err';
+          msg.textContent = (e && e.message) || String(e);
+        }
+        b.disabled = false;
+        b.textContent = label;
+      });
+      return b;
+    };
+    const title = (text, pill, pillClass) =>
+      h('div', { class: 'row', style: { gap: '8px' } }, h('h2', null, text), pill ? h('span', { class: 'pill ' + (pillClass || 'free') }, pill) : null);
+
+    if (!PM.drive.configured()) {
+      return h('section', { class: 'card dashed' },
+        h('div', { class: 'grow', style: { gap: '4px' } },
+          title('Google Drive', 'Setup needed', 'later'),
+          h('p', { class: 'sub' }, 'This build of Prolly has no Google client ID yet. Add one in shared/drive.js (see “Google Drive setup” in the README). The redirect URL to register for ' + PM.BROWSER + ' is:'),
+          h('p', { class: 'small mono', style: { 'word-break': 'break-all', 'user-select': 'all' } }, PM.drive.redirectURL() || 'not available in this browser')));
+    }
+
+    if (!d.connected) {
+      return h('section', { class: 'card' },
+        h('div', { class: 'row', style: { 'align-items': 'flex-start' } },
+          h('div', { class: 'grow', style: { gap: '4px' } },
+            title('Sync with Google Drive', 'Free'),
+            h('p', { class: 'sub', style: { 'max-width': '620px' } }, 'One Markdown file per prompt, in a “Prolly” folder in your own Drive: no 100 KB limit, and the same library in Chrome and Firefox. You can open the files, and Google Drive for desktop puts the folder on your computer. Prolly can see only the files it creates.')),
+          act('Connect Google Drive', 'Waiting for Google…', async () => {
+            await PM.drive.connect();
+            await driveCmd('connected');
+          }, 'dark')),
+        state.sync ? h('p', { class: 'small' }, 'Connecting turns off ' + PM.SYNC_NAME + ' on this computer: Google Drive takes over.') : null,
+        msg);
+    }
+
+    const e = d.lastError;
+    const status = [];
+    if (!e) {
+      status.push(h('span', { style: { color: 'var(--ok)', 'font-size': '13px' } }, d.lastSync ? '✓ Synced ' + PM.timeAgo(d.lastSync) : 'Syncing…'));
+    } else if (e.code === 'MASS_DELETE') {
+      status.push(
+        h('p', { class: 'err', style: { flex: '1 1 100%' } }, e.count + ' prompts were deleted from the Prolly folder in Drive. Sync is paused until you choose what to do with them here.'),
+        act('Put them back in Drive', 'Restoring…', () => driveCmd('resolve', { choice: 'restore' }), 'dark'),
+        act('Delete them here too', 'Deleting…', async () => {
+          if (!confirm('Delete these ' + e.count + ' prompts from Prolly on this computer too? If they were deleted by mistake, look in the bin in Google Drive first.')) return 'cancel';
+          await driveCmd('resolve', { choice: 'apply' });
+        }));
+    } else if (e.code === 'FOLDER_GONE') {
+      status.push(
+        h('p', { class: 'err', style: { flex: '1 1 100%' } }, e.message + ' Restore it from the bin in Drive and sync again, or start a new folder.'),
+        act('Start a new folder', 'Creating…', () => driveCmd('newFolder'), 'dark'));
+    } else if (e.code === 'AUTH' || e.code === 'SCOPE') {
+      status.push(
+        h('p', { class: 'err', style: { flex: '1 1 100%' } }, e.message),
+        act('Sign in again', 'Waiting for Google…', async () => {
+          await PM.drive.reauthorize();
+          await driveCmd('sync');
+        }, 'dark'));
+    } else {
+      status.push(h('p', { class: 'err' }, e.message + (d.lastSync ? ' Last synced ' + PM.timeAgo(d.lastSync) + '.' : '')));
+    }
+
+    return h('section', { class: 'card' },
+      h('div', { class: 'row', style: { 'align-items': 'flex-start' } },
+        h('div', { class: 'grow', style: { gap: '4px' } },
+          title('Google Drive', 'On'),
+          h('p', { class: 'sub' }, 'Connected as ', h('b', null, d.email || 'your Google account'), ' · ',
+            h('a', { href: PM.drive.folderURL(d.folderId), target: '_blank', rel: 'noopener' }, 'Open the Prolly folder'))),
+        act('Sync now', 'Syncing…', () => driveCmd('sync')),
+        act('Disconnect', 'Disconnecting…', async () => {
+          if (!confirm('Stop syncing with Google Drive on this computer? Your prompts stay in Prolly here, and the files stay in your Drive.')) return 'cancel';
+          await driveCmd('disconnect');
+        }, 'quiet')),
+      h('div', { class: 'row', style: { 'flex-wrap': 'wrap', gap: '8px' } }, status),
+      h('p', { class: 'small' }, 'Checks for changes every 5 minutes and a few seconds after you edit. A prompt you delete goes to the bin in Drive.'),
+      msg);
   }
 
   // ---------- Boot ----------
@@ -458,6 +551,11 @@
     clearTimeout(pending);
     pending = setTimeout(refresh, 150);
   });
+  ext.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes._drive) return;
+    clearTimeout(pending);
+    pending = setTimeout(refresh, 150);
+  });
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     PM.applyTheme(layer, state.settings);
     if (state.section === 'appearance') render();
@@ -467,5 +565,7 @@
     setSection();
     await load();
     render();
+    // Opening settings pulls in what changed in Drive since the last check.
+    if (state.drive && state.drive.connected && Date.now() - (state.drive.lastSync || 0) > 60000) driveCmd('sync').catch(() => {});
   })();
 })();
