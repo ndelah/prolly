@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prolly — settings</title>
+<link rel="icon" href="../icons/icon32.png">
+<link rel="stylesheet" href="options.css">
+</head>
+<body>
+<div class="app">
+  <nav class="side" aria-label="Settings sections">
+    <div class="brand"><span class="logo" id="brandLogo">#</span><span>Prolly</span></div>
+    <a href="#library" data-sec="library">Library <span id="libCount" class="count"></span></a>
+    <a href="#appearance" data-sec="appearance">Appearance</a>
+    <a href="#sites" data-sec="sites">Shortcut &amp; sites</a>
+    <a href="#sync" data-sec="sync">Sync &amp; backup</a>
+    <div class="side-note">Free forever. No account and no server of ours — prompts live in your browser and Chrome sync.</div>
+  </nav>
+  <main id="main" tabindex="-1"></main>
+</div>
+<div id="pmLayer" class="pm-ui"></div>
+<script src="../shared/core.js"></script>
+<script src="../shared/template.js"></script>
+<script src="../shared/theme.js"></script>
+<script src="../shared/store.js"></script>
+<script src="../shared/ui-css.js"></script>
+<script src="../shared/ui-picker.js"></script>
+<script src="../shared/ui-fill.js"></script>
+<script src="../shared/ui-editor.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

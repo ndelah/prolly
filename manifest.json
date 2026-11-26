@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "Prolly — prompt manager for AI chats",
+  "short_name": "Prolly",
+  "version": "1.0.0",
+  "description": "Save prompts with #variables#, then insert them into any AI chat with Ctrl + ;. Free sync through Chrome.",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Prolly",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options/options.html",
+  "permissions": ["storage", "scripting", "activeTab"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*"
+  ],
+  "optional_host_permissions": ["*://*/*"],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "shared/core.js",
+        "shared/template.js",
+        "shared/theme.js",
+        "shared/store.js",
+        "shared/ui-css.js",
+        "shared/ui-picker.js",
+        "shared/ui-fill.js",
+        "shared/ui-editor.js",
+        "content/content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

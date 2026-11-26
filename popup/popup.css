@@ -1,0 +1,26 @@
+:root {
+  --text: #1c1c1e; --muted: #55555a; --faint: #6b6b70; --line: #e6e4df; --bg: #ffffff; --soft: #f6f5f2;
+  --acc: #2563eb; --acc-deep: #1d4ed8; --ok: #1f7a3a; --warn: #9a3f00;
+}
+* { box-sizing: border-box; }
+body { margin: 0; width: 320px; background: var(--bg); color: var(--text); font: 14px/1.45 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.pop { display: flex; flex-direction: column; }
+.head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.logo { width: 24px; height: 24px; border-radius: 6px; background: var(--acc); color: #fff; font: 500 13px ui-monospace, SFMono-Regular, Menlo, monospace; display: flex; align-items: center; justify-content: center; }
+.name { font-weight: 700; font-size: 15px; }
+.kbd { margin-left: auto; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); border: 1px solid #d6d5d0; border-radius: 5px; padding: 2px 6px; }
+.status { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.state { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 4px; background: #b5b5ba; flex: none; }
+.dot.on { background: #22a046; }
+.host { font-weight: 400; color: var(--muted); }
+.note { margin: 0; font-size: 12.5px; color: var(--muted); }
+.note code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--soft); border-radius: 4px; padding: 1px 4px; overflow-wrap: anywhere; }
+.err { margin: 0; font-size: 12.5px; color: #b42318; }
+.btns { display: flex; flex-direction: column; gap: 8px; }
+button { height: 36px; border-radius: 8px; border: 1px solid #d6d4ce; background: #fff; color: var(--text); font: inherit; font-size: 13.5px; cursor: pointer; padding: 0 12px; text-align: center; }
+button.primary { background: #17181c; border-color: #17181c; color: #fff; font-weight: 500; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.foot { display: flex; gap: 16px; padding: 10px 16px 14px; border-top: 1px solid var(--line); }
+.foot a { color: var(--acc-deep); text-decoration: none; font-size: 13px; }
+.foot a:hover { text-decoration: underline; }
