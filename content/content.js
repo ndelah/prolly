@@ -628,7 +628,7 @@
     } else if (cur.kind === 'fill') cur.comp.done();
   }, true);
 
-  chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+  ext.runtime.onMessage.addListener((msg, sender, respond) => {
     if (!msg || typeof msg.type !== 'string' || msg.type.slice(0, 3) !== 'pm:') return;
     (async () => {
       await ready;
@@ -651,6 +651,6 @@
   });
 
   ready.then(() => {
-    if (activeHere()) chrome.runtime.sendMessage({ type: 'pm:active' }).catch(() => {});
+    if (activeHere()) ext.runtime.sendMessage({ type: 'pm:active' }).catch(() => {});
   });
 })();

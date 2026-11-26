@@ -1,5 +1,5 @@
-// Storage: prompts + settings in chrome.storage.sync (free Chrome sync), or chrome.storage.local
-// when sync is turned off on this computer. "Recent" is always per computer.
+// Storage: prompts + settings in storage.sync (the browser's free sync: Chrome sync or Firefox Sync),
+// or storage.local when sync is turned off on this computer. "Recent" is always per computer.
 //
 // Layout (in the active area):
 //   settings          -> settings object
@@ -12,13 +12,28 @@
   const PM = (globalThis.PM = globalThis.PM || {});
   if (PM.store) return;
 
-  const S = chrome.storage;
+  const S = ext.storage;
   const ITEM_MAX = (S.sync && S.sync.QUOTA_BYTES_PER_ITEM) || 8192;
   const SYNC_QUOTA = (S.sync && S.sync.QUOTA_BYTES) || 102400;
   const LOCAL_QUOTA = (S.local && S.local.QUOTA_BYTES) || 10485760;
   const enc = new TextEncoder();
   const size = (s) => enc.encode(s).length;
   const HEAD_RE = /^p\.([A-Za-z0-9_-]+)$/;
+  const SYNC_NAME = PM.SYNC_NAME;
+
+  // Bytes used by these keys (null: all). Firefox has no storage.local.getBytesInUse before 144,
+  // so count the way Chrome does: key length plus the JSON of the value.
+  async function bytesInUse(a, keys) {
+    if (typeof a.getBytesInUse === 'function') {
+      try {
+        return await a.getBytesInUse(keys);
+      } catch (e) { /* count below */ }
+    }
+    const all = await a.get(keys);
+    let n = 0;
+    for (const k of Object.keys(all)) n += size(k) + size(JSON.stringify(all[k]));
+    return n;
+  }
 
   const builtin = (host) => ({ host, builtin: true, enabled: true, target: null, shortcut: null });
   const DEFAULT_SITES = [builtin('chatgpt.com'), builtin('claude.ai'), builtin('gemini.google.com')];
@@ -59,9 +74,10 @@
   function friendly(e) {
     const msg = (e && e.message) || String(e);
     if (/QUOTA_BYTES_PER_ITEM/.test(msg)) return new Error('This prompt is too large to save.');
-    if (/QUOTA_BYTES/.test(msg)) return new Error('Chrome sync is full (100 KB for this extension). Delete some prompts, or turn off sync in Settings › Sync & backup.');
-    if (/MAX_ITEMS/.test(msg)) return new Error('Too many prompts for Chrome sync. Turn off sync in Settings › Sync & backup to store more.');
-    if (/MAX_WRITE_OPERATIONS/.test(msg)) return new Error('Chrome sync is busy (too many saves in a short time). Try again in a minute.');
+    if (/QUOTA_BYTES/.test(msg)) return new Error(SYNC_NAME + ' is full (100 KB for this extension). Delete some prompts, or turn off sync in Settings › Sync & backup.');
+    if (/MAX_ITEMS/.test(msg)) return new Error('Too many prompts for ' + SYNC_NAME + '. Turn off sync in Settings › Sync & backup to store more.');
+    if (/MAX_WRITE_OPERATIONS/.test(msg)) return new Error(SYNC_NAME + ' is busy (too many saves in a short time). Try again in a minute.');
+    if (/quota/i.test(msg)) return new Error(SYNC_NAME + ' is full. Delete some prompts, or turn off sync in Settings › Sync & backup.');
     return new Error(msg);
   }
   async function write(a, items) {
@@ -257,11 +273,11 @@
       const a = on ? S.sync : S.local;
       const all = await a.get(null);
       const keys = Object.keys(all).filter((k) => k === 'settings' || k.slice(0, 2) === 'p.');
-      const bytes = keys.length ? await a.getBytesInUse(keys) : 0;
+      const bytes = keys.length ? await bytesInUse(a, keys) : 0;
       return { sync: on, bytes, quota: on ? SYNC_QUOTA : LOCAL_QUOTA };
     },
 
-    // Turn Chrome sync on or off for this computer, moving the library across.
+    // Turn browser sync on or off for this computer, moving the library across.
     async setSyncOn(on) {
       const cur = await syncOn();
       if (cur === on) return;
@@ -289,10 +305,10 @@
       const items = {};
       toWrite.forEach((p) => Object.assign(items, encode(p)));
       if (!remoteAll.settings && localAll.settings) items.settings = localAll.settings;
-      const used = await S.sync.getBytesInUse(null);
+      const used = await bytesInUse(S.sync, null);
       const adding = size(JSON.stringify(items));
       if (used + adding > SYNC_QUOTA) {
-        throw new Error('Your library (' + PM.formatBytes(used + adding) + ') is larger than Chrome sync allows (100 KB). Delete some prompts first, or keep sync off.');
+        throw new Error('Your library (' + PM.formatBytes(used + adding) + ') is larger than ' + SYNC_NAME + ' allows (100 KB). Delete some prompts first, or keep sync off.');
       }
       if (Object.keys(items).length) await write(S.sync, items);
       await S.local.set({ _sync: true });
@@ -340,7 +356,7 @@
 
     // cb(changes, areaName) for prompt/settings changes in either area.
     onChanged(cb) {
-      chrome.storage.onChanged.addListener((changes, areaName) => {
+      ext.storage.onChanged.addListener((changes, areaName) => {
         if (areaName !== 'sync' && areaName !== 'local') return;
         const keys = Object.keys(changes).filter((k) => k === 'settings' || k === '_sync' || k.slice(0, 2) === 'p.');
         if (keys.length) cb(changes, areaName);

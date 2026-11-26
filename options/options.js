@@ -271,7 +271,8 @@
           const on = site.enabled === false;
           if (on && !site.builtin) {
             const origins = PM.sitePatterns(site.host);
-            if (!(await chrome.permissions.contains({ origins })) && !(await chrome.permissions.request({ origins }))) return;
+            // Called straight from the click (Firefox requires it); resolves true at once if access is already there.
+            if (!(await ext.permissions.request({ origins }).catch(() => false))) return;
           }
           await updateSite(idx, { enabled: on });
           render();
@@ -279,7 +280,7 @@
         site.builtin ? h('span') : h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Remove ' + site.host, title: 'Remove', onclick: async () => {
           const sites = state.settings.sites.filter((x, i) => i !== idx);
           await saveSettings({ sites });
-          chrome.permissions.remove({ origins: PM.sitePatterns(site.host) }).catch(() => {});
+          ext.permissions.remove({ origins: PM.sitePatterns(site.host) }).catch(() => {});
           render();
         } }, PM.icon('trash', 16)));
     };
@@ -300,18 +301,19 @@
           return;
         }
         const origins = PM.sitePatterns(host);
-        if (await chrome.permissions.contains({ origins })) {
-          await chrome.runtime.sendMessage({ type: 'pm:enableSite', host, openTab: true });
-        } else {
-          // The background worker finishes this in permissions.onAdded (the page may lose focus to the dialog).
-          await chrome.storage.local.set({ _pendingSite: { host, openTab: true, at: Date.now() } });
-          const ok = await chrome.permissions.request({ origins }).catch(() => false);
-          if (!ok) {
-            await chrome.storage.local.remove('_pendingSite');
-            msg.textContent = 'Prolly needs access to ' + host + ' to work there.';
-            return;
-          }
+        // Nothing is awaited before permissions.request(): Firefox only prompts straight from the click.
+        // The background script finishes this in permissions.onAdded (the page may lose focus to the dialog).
+        const had = ext.permissions.contains({ origins }).catch(() => false);
+        const pending = ext.storage.local.set({ _pendingSite: { host, openTab: true, at: Date.now() } });
+        const ok = await ext.permissions.request({ origins }).catch(() => false);
+        await pending;
+        if (!ok) {
+          await ext.storage.local.remove('_pendingSite');
+          msg.textContent = 'Prolly needs access to ' + host + ' to work there.';
+          return;
         }
+        // Access was already there, so permissions.onAdded will not fire: finish here.
+        if (await had) await ext.runtime.sendMessage({ type: 'pm:enableSite', host, openTab: true });
         state.flash = 'Added ' + host + '. A tab opened there — click the text area you want to use.';
       };
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); if (e.key === 'Escape') addWrap.replaceChildren(); });
@@ -334,7 +336,7 @@
           isDefault ? null : h('button', { type: 'button', class: 'btn quiet', onclick: async () => { await saveSettings({ shortcut: PM.DEFAULT_SHORTCUT }); render(); } }, 'Reset')),
         recHint,
         h('div', { class: 'note' }, h('b', null, 'Why ' + PM.shortcutLabel(PM.DEFAULT_SHORTCUT)),
-          h('span', null, 'One hand, no Shift, nothing typed into the text area, and Chrome leaves it free. Most AI chats keep their shortcuts on ⌘/Ctrl + K, /, Shift and Enter. Mac users get Control + ; rather than ⌘ + ;, because ⌘ shortcuts are the ones apps tend to claim.')),
+          h('span', null, 'One hand, no Shift, nothing typed into the text area, and ' + PM.BROWSER + ' leaves it free. Most AI chats keep their shortcuts on ⌘/Ctrl + K, /, Shift and Enter. Mac users get Control + ; rather than ⌘ + ;, because ⌘ shortcuts are the ones apps tend to claim.')),
         h('div', { class: 'row', style: { 'padding-top': '2px' } },
           h('div', { class: 'grow' },
             h('span', { style: { 'font-size': '14px', 'font-weight': '500' } }, 'Also open when I type ', h('span', { class: 'mono', style: { background: '#f1f0ed', 'border-radius': '4px', padding: '1px 5px' } }, ';;')),
@@ -408,17 +410,19 @@
       h('section', { class: 'card' },
         h('div', { class: 'row', style: { 'align-items': 'flex-start' } },
           h('div', { class: 'grow', style: { gap: '4px' } },
-            h('div', { class: 'row', style: { gap: '8px' } }, h('h2', null, 'Sync with Chrome'), h('span', { class: 'pill free' }, 'Free')),
-            h('p', { class: 'sub', style: { 'max-width': '620px' } }, 'Your prompts follow your Chrome profile to every computer where you\'re signed in to Chrome with sync on. Nothing to set up.')),
-          switchEl(state.sync, 'Sync with Chrome', toggleSync)),
+            h('div', { class: 'row', style: { gap: '8px' } }, h('h2', null, 'Sync with ' + PM.BROWSER), h('span', { class: 'pill free' }, 'Free')),
+            h('p', { class: 'sub', style: { 'max-width': '620px' } }, PM.isFirefox
+              ? 'Your prompts follow your Mozilla account to every computer where you\'re signed in to Firefox with Add-ons turned on in Sync. Nothing to set up.'
+              : 'Your prompts follow your Chrome profile to every computer where you\'re signed in to Chrome with sync on. Nothing to set up.')),
+          switchEl(state.sync, 'Sync with ' + PM.BROWSER, toggleSync)),
         h('div', { class: 'grow', style: { gap: '8px' } },
           h('div', { class: 'row', style: { 'justify-content': 'space-between', 'font-size': '13px' } },
             h('span', null, h('b', null, n + (n === 1 ? ' prompt' : ' prompts')), ' · ' + PM.formatBytes(u.bytes) + ' of ' + PM.formatBytes(u.quota) + (state.sync ? '' : ' (this computer only)')),
             h('span', { style: { color: 'var(--ok)' } }, lastEdit ? '✓ Saved · last edit ' + PM.timeAgo(lastEdit) : '')),
           h('div', { class: 'meter' + (pct > 90 ? ' full' : '') }, h('div', { style: { width: pct + '%' } })),
           h('p', { class: 'small' }, state.sync
-            ? 'Chrome gives each extension 100 KB of synced space — a few hundred typical prompts. Long prompts are split into pieces automatically.'
-            : 'Sync is off: prompts are kept on this computer only. Turn it on to copy them into Chrome sync.')),
+            ? PM.BROWSER + ' gives each extension 100 KB of synced space — a few hundred typical prompts. Long prompts are split into pieces automatically.'
+            : 'Sync is off: prompts are kept on this computer only. Turn it on to copy them into ' + PM.SYNC_NAME + '.')),
         h('div', { class: 'note' }, h('b', null, 'Edited on two computers?'), h('span', null, 'The latest edit wins, and the other version is kept as “Title (copy)” so nothing is lost.'))),
       h('section', { class: 'card' },
         h('div', { class: 'row' },
