@@ -1,6 +1,9 @@
-// Service worker: registers the content script on sites you add, finishes "Use Prolly on this site",
-// keeps a copy of a prompt edited on two computers at once, and seeds starter prompts on install.
-importScripts('shared/core.js', 'shared/template.js', 'shared/store.js');
+// Background script: registers the content script on sites you add, finishes "Use Prolly on this site",
+// keeps a copy of a prompt edited on two computers at once, syncs with Google Drive, seeds the setup
+// prompt on install, and opens the import screen for an import block found on a chat page.
+// Chrome runs it as a service worker and loads the shared files here. Firefox runs it as an event page
+// and its manifest lists the shared files before this one (see scripts/firefox-manifest.js).
+if (typeof importScripts === 'function') importScripts('shared/core.js', 'shared/template.js', 'shared/store.js', 'shared/mdfile.js', 'shared/filesync.js', 'shared/drive.js', 'shared/onboarding.js');
 const PM = self.PM;
 
 const CONTENT_JS = [
@@ -22,12 +25,12 @@ async function syncContentScripts() {
   for (const site of s.sites) {
     if (site.builtin || site.enabled === false) continue;
     const pats = PM.sitePatterns(site.host);
-    if (await chrome.permissions.contains({ origins: pats })) origins.push(...pats);
+    if (await ext.permissions.contains({ origins: pats })) origins.push(...pats);
   }
-  const existing = await chrome.scripting.getRegisteredContentScripts({ ids: ['pm-custom'] });
-  if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: ['pm-custom'] });
+  const existing = await ext.scripting.getRegisteredContentScripts({ ids: ['pm-custom'] });
+  if (existing.length) await ext.scripting.unregisterContentScripts({ ids: ['pm-custom'] });
   if (origins.length) {
-    await chrome.scripting.registerContentScripts([
+    await ext.scripting.registerContentScripts([
       { id: 'pm-custom', matches: [...new Set(origins)], js: CONTENT_JS, runAt: 'document_start', allFrames: false, persistAcrossSessions: true }
     ]);
   }
@@ -35,7 +38,7 @@ async function syncContentScripts() {
 
 async function injectInto(tabId) {
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_JS });
+    await ext.scripting.executeScript({ target: { tabId }, files: CONTENT_JS });
     return true;
   } catch (e) {
     return false;
@@ -45,7 +48,7 @@ async function injectInto(tabId) {
 function waitForTab(tabId) {
   return new Promise((resolve) => {
     const done = () => {
-      chrome.tabs.onUpdated.removeListener(onUpd);
+      ext.tabs.onUpdated.removeListener(onUpd);
       clearTimeout(timer);
       setTimeout(resolve, 400);
     };
@@ -53,7 +56,7 @@ function waitForTab(tabId) {
       if (id === tabId && info.status === 'complete') done();
     };
     const timer = setTimeout(done, 30000);
-    chrome.tabs.onUpdated.addListener(onUpd);
+    ext.tabs.onUpdated.addListener(onUpd);
   });
 }
 
@@ -69,28 +72,28 @@ async function enableSite({ host, tabId, openTab }) {
   await syncContentScripts();
   if (tabId != null) {
     await injectInto(tabId);
-    await chrome.tabs.sendMessage(tabId, { type: 'pm:pickTarget' }).catch(() => {});
+    await ext.tabs.sendMessage(tabId, { type: 'pm:pickTarget' }).catch(() => {});
   } else if (openTab) {
-    const tab = await chrome.tabs.create({ url: 'https://' + host + '/' });
+    const tab = await ext.tabs.create({ url: 'https://' + host + '/' });
     await waitForTab(tab.id);
-    await chrome.tabs.sendMessage(tab.id, { type: 'pm:pickTarget' }).catch(async () => {
+    await ext.tabs.sendMessage(tab.id, { type: 'pm:pickTarget' }).catch(async () => {
       await injectInto(tab.id);
-      await chrome.tabs.sendMessage(tab.id, { type: 'pm:pickTarget' }).catch(() => {});
+      await ext.tabs.sendMessage(tab.id, { type: 'pm:pickTarget' }).catch(() => {});
     });
   }
 }
 
-chrome.permissions.onAdded.addListener(() =>
+ext.permissions.onAdded.addListener(() =>
   serial(async () => {
-    const { _pendingSite: p } = await chrome.storage.local.get('_pendingSite');
+    const { _pendingSite: p } = await ext.storage.local.get('_pendingSite');
     if (p && Date.now() - (p.at || 0) < 10 * 60 * 1000) {
-      await chrome.storage.local.remove('_pendingSite');
+      await ext.storage.local.remove('_pendingSite');
       await enableSite(p);
     } else {
       await syncContentScripts();
     }
   }));
-chrome.permissions.onRemoved.addListener(() => serial(syncContentScripts));
+ext.permissions.onRemoved.addListener(() => serial(syncContentScripts));
 
 // ---------- Edited on two computers: keep both ----------
 const same = (a, b) =>
@@ -100,9 +103,9 @@ const same = (a, b) =>
 async function reconcile() {
   if (!(await PM.store.syncOn())) return;
   const me = await PM.store.deviceId();
-  const all = await chrome.storage.sync.get(null);
+  const all = await ext.storage.sync.get(null);
   const { prompts, incomplete } = PM.store._decodeAll(all);
-  const { _mirror: mirror = {} } = await chrome.storage.local.get('_mirror');
+  const { _mirror: mirror = {} } = await ext.storage.local.get('_mirror');
   const writes = [];
   for (const p of prompts) {
     const m = mirror[p.id];
@@ -123,29 +126,120 @@ async function reconcile() {
   prompts.forEach((p) => (next[p.id] = p));
   incomplete.forEach((id) => mirror[id] && (next[id] = mirror[id]));
   writes.forEach((w) => (next[w.id] = w));
-  await chrome.storage.local.set({ _mirror: next });
+  await ext.storage.local.set({ _mirror: next });
 }
 let recTimer = 0;
 
-chrome.storage.onChanged.addListener((changes, area) => {
+// ---------- Google Drive ----------
+// While Drive is connected, browser sync is off: the library lives in storage.local and this copies
+// changes both ways with the Prolly folder (shared/filesync.js). It runs a few seconds after an edit,
+// every 5 minutes, and when the settings page asks.
+const DRIVE_ALARM = 'pm-drive';
+// After these, only a click on the settings page tries again.
+const DRIVE_WAITS_FOR_USER = ['FOLDER_GONE', 'MASS_DELETE', 'SCOPE', 'SETUP'];
+const library = {
+  load: () => PM.store.loadPrompts(),
+  save: (list) => PM.store.savePrompts(list, { keepMeta: true }),
+  remove: (id) => PM.store.deletePrompt(id)
+};
+
+async function driveSync(opts) {
+  opts = opts || {};
+  const st = await PM.drive.getState();
+  if (!st.connected) return st;
+  if (opts.auto && st.lastError && DRIVE_WAITS_FOR_USER.indexOf(st.lastError.code) >= 0) return st;
+  // Edits made on this computer before Drive was connected may still be in browser sync.
+  if (await PM.store.syncOn()) await PM.store.setSyncOn(false);
+  try {
+    const res = await PM.fileSync.run({ provider: PM.drive.provider(st.folderId), local: library, state: st, localOnly: opts.localOnly, massDelete: opts.massDelete });
+    if (res.skipped) return st;
+    return PM.drive.setState({ files: res.state.files, lastSync: Date.now(), lastError: null, lastStats: res.stats });
+  } catch (e) {
+    console.warn('[Prolly] Google Drive sync:', e);
+    const patch = { lastError: { code: e.code || 'ERROR', message: (e && e.message) || String(e), count: e.count || 0, at: Date.now() } };
+    if (e.state) patch.files = e.state.files;
+    return PM.drive.setState(patch);
+  }
+}
+
+async function driveAlarm() {
+  const st = await PM.drive.getState();
+  if (!st.connected) return ext.alarms.clear(DRIVE_ALARM);
+  if (!(await ext.alarms.get(DRIVE_ALARM))) await ext.alarms.create(DRIVE_ALARM, { periodInMinutes: 5 });
+}
+ext.alarms.onAlarm.addListener((a) => {
+  if (a.name === DRIVE_ALARM) serial(() => driveSync({ auto: true }));
+});
+
+async function driveCommand(msg) {
+  switch (msg.op) {
+    case 'connected': // the settings page finished signing in
+      await driveAlarm();
+      return driveSync();
+    case 'sync':
+      return driveSync();
+    case 'resolve': // after MASS_DELETE: 'restore' or 'apply'
+      return driveSync({ massDelete: msg.choice === 'apply' ? 'apply' : 'restore' });
+    case 'newFolder':
+      await PM.drive.newFolder();
+      return driveSync();
+    case 'disconnect':
+      await PM.drive.disconnect();
+      await driveAlarm();
+      return PM.drive.getState();
+  }
+  return PM.drive.getState();
+}
+
+let driveTimer = 0;
+ext.storage.onChanged.addListener((changes, area) => {
   if (changes.settings || changes._sync) serial(syncContentScripts);
   if (area === 'sync' && Object.keys(changes).some((k) => k.slice(0, 2) === 'p.')) {
     clearTimeout(recTimer);
     recTimer = setTimeout(() => serial(reconcile), 1500);
   }
+  // Includes the sync's own writes: those find nothing to do and make no request (localOnly).
+  if (area === 'local' && Object.keys(changes).some((k) => k.slice(0, 2) === 'p.')) {
+    clearTimeout(driveTimer);
+    driveTimer = setTimeout(() => serial(() => driveSync({ localOnly: true, auto: true })), 2000);
+  }
 });
 
 // ---------- Messages from the popup, options page and content script ----------
-chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname;
+  } catch (e) {
+    return '';
+  }
+};
+ext.runtime.onMessage.addListener((msg, sender, respond) => {
   if (!msg || typeof msg.type !== 'string') return;
   if (msg.type === 'pm:active' && sender.tab) {
-    chrome.action.setTitle({ tabId: sender.tab.id, title: 'Prolly · active on this site' }).catch(() => {});
+    ext.action.setTitle({ tabId: sender.tab.id, title: 'Prolly · active on this site' }).catch(() => {});
     return;
   }
   if (msg.type === 'pm:enableSite') {
     serial(async () => {
-      await chrome.storage.local.remove('_pendingSite');
+      await ext.storage.local.remove('_pendingSite');
       await enableSite(msg);
+    }).then(() => respond({ ok: true }));
+    return true;
+  }
+  if (msg.type === 'pm:drive') {
+    serial(() => driveCommand(msg)).then((state) => respond({ ok: true, state }));
+    return true;
+  }
+  // An import block the content script found on a chat page: hand it to the import screen.
+  if (msg.type === 'pm:importText' && Array.isArray(msg.texts) && msg.texts.length) {
+    serial(async () => {
+      const texts = msg.texts.filter((t) => typeof t === 'string').slice(0, 20).map((t) => t.slice(0, 500000));
+      await ext.storage.local.set({ _pendingImport: { texts, host: hostOf(sender.url), at: Date.now() } });
+      // An open settings page answers and shows the import screen itself; otherwise open one.
+      const shown = await ext.runtime.sendMessage({ type: 'pm:showImport' }).catch(() => null);
+      if (!(shown && shown.ok)) {
+        await ext.tabs.create({ url: ext.runtime.getURL('options/options.html#import'), index: sender.tab ? sender.tab.index + 1 : undefined });
+      }
     }).then(() => respond({ ok: true }));
     return true;
   }
@@ -156,26 +250,25 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 });
 
 // ---------- Install ----------
-const SEED = [
-  { title: 'Code review', folder: 'Dev', tags: ['review', 'code'], text: 'Review this #language# code for bugs, security issues and readability. Pay special attention to #focus#.\n\nWhere it helps, suggest more idiomatic #language# alternatives. Return the findings as a #format:numbered list|table|checklist#, ordered by severity.' },
-  { title: 'Explain like a senior engineer', folder: 'Dev', tags: ['learning'], text: 'Explain #concept# as if I were a #level:junior|mid-level|senior# developer. Use one concrete example from #domain#, then list the three mistakes people make most often.' },
-  { title: 'Write unit tests', folder: 'Dev/Testing', tags: ['testing'], text: 'Write #framework# unit tests for the function below. Cover the happy path, empty inputs and #edge_case#. Explain each test in one line.' },
-  { title: 'Commit message from diff', folder: 'Dev', tags: ['git'], text: 'Write a conventional commit message for the diff below. Subject under 72 characters, then a short body explaining why, not what.' },
-  { title: 'Translate & localize', folder: 'Writing', tags: ['translation'], text: 'Translate the text below into #language#, keeping a #tone:formal|friendly|playful# tone. Flag any idiom that does not carry over and suggest a local equivalent.' },
-  { title: 'Summarize a paper', folder: 'Research', tags: ['summary'], text: 'Summarize this paper in #length:one paragraph|five bullets|one page# for a #audience# audience. Start with the main claim, then the method, then the limitations the authors admit.' },
-  { title: 'Meeting notes → action items', folder: 'Ops', tags: ['meetings'], text: 'Turn the notes below into action items. For each one give an owner, a due date if mentioned, and a one-line description. Group them by person.' }
-];
+// A new library starts with one prompt: it asks the AI to write the prompts you reuse as an import block.
+const SEED = [PM.SETUP_PROMPT];
 
-chrome.runtime.onInstalled.addListener((details) =>
+ext.runtime.onInstalled.addListener((details) =>
   serial(async () => {
     if (details.reason === 'install') {
       const existing = await PM.store.loadPrompts();
       if (!existing.length) await PM.store.savePrompts(SEED);
     }
     await syncContentScripts();
+    await driveAlarm();
     // Start in tabs that were already open.
-    const tabs = await chrome.tabs.query({ url: BUILTIN_URLS });
+    const tabs = await ext.tabs.query({ url: BUILTIN_URLS });
     for (const t of tabs) await injectInto(t.id);
-    if (details.reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html#library') });
+    if (details.reason === 'install') ext.tabs.create({ url: ext.runtime.getURL('options/options.html#library') });
   }));
-chrome.runtime.onStartup.addListener(() => serial(syncContentScripts));
+ext.runtime.onStartup.addListener(() =>
+  serial(async () => {
+    await syncContentScripts();
+    await driveAlarm();
+    await driveSync({ auto: true });
+  }));

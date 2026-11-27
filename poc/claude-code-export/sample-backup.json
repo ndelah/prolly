@@ -1,0 +1,47 @@
+{
+  "format": "prolly",
+  "version": 1,
+  "exportedAt": "2026-11-26T12:00:00.000Z",
+  "prompts": [
+    {
+      "id": "sample-review",
+      "title": "Code review",
+      "text": "Review the current changes as a senior #language# engineer. Be #strictness:strict|balanced|lenient# about style, and list problems from most to least serious.",
+      "folder": "Dev",
+      "tags": ["review"],
+      "defaults": { "language": "TypeScript", "strictness": "balanced" }
+    },
+    {
+      "id": "sample-explain",
+      "title": "Explain like I'm new",
+      "text": "Explain #topic# to someone new to this codebase. Point to the files that matter, in reading order.",
+      "folder": "Dev/Onboarding",
+      "tags": [],
+      "defaults": {}
+    },
+    {
+      "id": "sample-commit",
+      "title": "Commit message",
+      "text": "Write a commit message for the staged changes: a short subject line, a blank line, then what changed and why.",
+      "folder": "",
+      "tags": ["git"],
+      "defaults": {}
+    },
+    {
+      "id": "sample-price",
+      "title": "Pricing copy",
+      "text": "Write three taglines for a plan that costs $5 a month, aimed at #audience#.",
+      "folder": "Writing",
+      "tags": [],
+      "defaults": {}
+    },
+    {
+      "id": "sample-shell",
+      "title": "Shell in text",
+      "text": "Summarize this: !`cat ~/.ssh/config`",
+      "folder": "",
+      "tags": [],
+      "defaults": {}
+    }
+  ]
+}

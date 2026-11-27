@@ -112,6 +112,16 @@
 .pm-toast .pm-ok { color: var(--pm-ok); }
 .pm-toast button { background: var(--pm-divider); border: 0; color: var(--pm-text); border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; white-space: nowrap; }
 
+/* ---------- Import block found on a chat page ---------- */
+.pm-importbar { position: fixed; top: 64px; left: 0; right: 0; margin: 0 auto; width: max-content; pointer-events: auto; display: flex; align-items: center; gap: 10px;
+  max-width: calc(100vw - 24px); padding: 8px 8px 8px 10px; background: var(--pm-panel); color: var(--pm-text); border: 1px solid var(--pm-border);
+  border-radius: 12px; box-shadow: var(--pm-shadow); font-size: 13.5px; animation: pm-fade 120ms ease-out; }
+.pm-importbar b { font-weight: 600; }
+.pm-importbar .pm-btn { height: 30px; padding: 0 12px; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.pm-importbar-x { width: 28px; height: 28px; flex: none; border: 0; border-radius: 6px; background: transparent; color: var(--pm-faint); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; }
+.pm-importbar-x:hover { background: var(--pm-divider); color: var(--pm-text); }
+
 /* ---------- Editor ---------- */
 .pm-scrim { position: fixed; inset: 0; background: rgba(18, 18, 22, 0.22); pointer-events: auto; animation: pm-fade 120ms ease-out; }
 .pm-root[data-pm-theme="dark"] .pm-scrim { background: rgba(0, 0, 0, 0.45); }

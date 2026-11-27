@@ -1,9 +1,16 @@
 // Shared helpers: DOM builder, icons, shortcuts, small utilities.
-// Loaded in the content script, extension pages and the service worker.
+// Loaded in the content script, extension pages and the background script.
 (function () {
   'use strict';
   const PM = (globalThis.PM = globalThis.PM || {});
   if (PM.h) return;
+
+  // Extension API: Firefox's promise-based `browser`, else Chrome's `chrome`. Every file calls `ext.*`.
+  const ext = (globalThis.ext = globalThis.ext || globalThis.browser || globalThis.chrome);
+  // The Firefox build's manifest carries browser_specific_settings; the Chrome one does not.
+  PM.isFirefox = !!(ext && ext.runtime && ext.runtime.getManifest && ext.runtime.getManifest().browser_specific_settings);
+  PM.BROWSER = PM.isFirefox ? 'Firefox' : 'Chrome';
+  PM.SYNC_NAME = PM.isFirefox ? 'Firefox Sync' : 'Chrome sync';
 
   const plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
   PM.isMac = /mac|iphone|ipad/i.test(plat);

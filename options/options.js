@@ -16,7 +16,7 @@
     { id: 's3', title: 'Meeting notes → action items', folder: 'Ops', tags: ['meetings'], text: 'Turn the notes below into action items with an owner each.' }
   ];
 
-  const state = { settings: null, prompts: [], section: 'library', query: '', usage: null, sync: true, flash: null };
+  const state = { settings: null, prompts: [], section: 'library', query: '', usage: null, sync: true, drive: null, flash: null };
   let editor = null;
   let recording = null; // { siteHost | null, cleanup }
 
@@ -33,8 +33,8 @@
   };
 
   async function load() {
-    const [settings, prompts, usage, sync] = await Promise.all([PM.store.getSettings(), PM.store.loadPrompts(), PM.store.usage(), PM.store.syncOn()]);
-    Object.assign(state, { settings, prompts, usage, sync });
+    const [settings, prompts, usage, sync, drive] = await Promise.all([PM.store.getSettings(), PM.store.loadPrompts(), PM.store.usage(), PM.store.syncOn(), PM.drive.getState()]);
+    Object.assign(state, { settings, prompts, usage, sync, drive });
     document.getElementById('libCount').textContent = '· ' + prompts.length;
     document.documentElement.style.setProperty('--acc', settings.accent);
     PM.applyTheme(layer, settings);
@@ -42,9 +42,10 @@
 
   function setSection() {
     const s = (location.hash || '#library').slice(1);
-    state.section = ['library', 'appearance', 'sites', 'sync'].indexOf(s) >= 0 ? s : 'library';
+    state.section = ['library', 'import', 'appearance', 'sites', 'sync'].indexOf(s) >= 0 ? s : 'library';
+    const nav = state.section === 'import' ? 'library' : state.section;
     document.querySelectorAll('.side a').forEach((a) => {
-      const on = a.getAttribute('data-sec') === state.section;
+      const on = a.getAttribute('data-sec') === nav;
       a.classList.toggle('on', on);
       if (on) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
@@ -53,7 +54,7 @@
 
   function render() {
     stopRecording();
-    const f = { library: renderLibrary, appearance: renderAppearance, sites: renderSites, sync: renderSync }[state.section];
+    const f = { library: renderLibrary, import: renderImport, appearance: renderAppearance, sites: renderSites, sync: renderSync }[state.section];
     main.replaceChildren();
     PM.append(main, f());
   }
@@ -119,6 +120,7 @@
         h('span', { class: 'lib-side' }, p.tags.slice(0, 3).map((t) => h('span', { class: 'tagpill' }, t)), vars ? h('span', { class: 'varpill' }, vars + (vars === 1 ? ' var' : ' vars')) : null));
     };
     const sc = PM.shortcutLabel(state.settings.shortcut);
+    const onlySetup = state.prompts.length <= 1 && state.prompts.every((p) => p.title === PM.SETUP_PROMPT.title);
     let body;
     if (!state.prompts.length) {
       body = h('div', { class: 'empty' }, h('p', null, 'No prompts yet.'), h('p', { class: 'small', style: { 'margin-top': '6px' } }, 'Create one, and write #name# wherever a value changes each time.'));
@@ -135,10 +137,26 @@
         h('h1', null, 'Library'),
         h('span', { style: { flex: '1' } }),
         search,
+        h('a', { class: 'btn', href: '#import' }, 'Import from AI'),
         h('button', { type: 'button', class: 'btn dark', onclick: () => openEditor(null, { title: state.query.trim() }) }, '+ New prompt')),
-      h('div', { class: 'note' }, h('b', null, 'Tip'), h('span', null, 'In ChatGPT, Claude, Gemini or any site you add, click into the message box and press ' + sc + (state.settings.typedTrigger ? ' (or type ;;)' : '') + ' to open your prompts.')),
+      onlySetup
+        ? h('section', { class: 'card start' },
+          h('div', { class: 'row', style: { 'align-items': 'flex-start', 'flex-wrap': 'wrap' } },
+            h('div', { class: 'grow', style: { gap: '6px' } },
+              h('h2', null, 'Start with the prompts you already use'),
+              h('ol', { class: 'steps' },
+                h('li', null, 'Open ChatGPT, Claude or Gemini, click into the message box and press ', h('b', null, sc), (state.settings.typedTrigger ? ' (or type ;;)' : '') + '.'),
+                h('li', null, 'Pick “' + PM.SETUP_PROMPT.title + '” and press Enter. The AI looks at how you prompt and writes your library.'),
+                h('li', null, 'Click Review & import under its reply, check what it found, and import.'))),
+            h('a', { class: 'btn', href: '#import' }, 'Paste a reply instead')))
+        : h('div', { class: 'note' }, h('b', null, 'Tip'), h('span', null, 'In ChatGPT, Claude, Gemini or any site you add, click into the message box and press ' + sc + (state.settings.typedTrigger ? ' (or type ;;)' : '') + ' to open your prompts.')),
       body
     ];
+  }
+
+  // ---------- Import from AI (options/import.js) ----------
+  function renderImport() {
+    return PM.importScreen.render({ prompts: state.prompts, settings: state.settings, layer, refresh });
   }
 
   // ---------- Appearance ----------
@@ -271,7 +289,8 @@
           const on = site.enabled === false;
           if (on && !site.builtin) {
             const origins = PM.sitePatterns(site.host);
-            if (!(await chrome.permissions.contains({ origins })) && !(await chrome.permissions.request({ origins }))) return;
+            // Called straight from the click (Firefox requires it); resolves true at once if access is already there.
+            if (!(await ext.permissions.request({ origins }).catch(() => false))) return;
           }
           await updateSite(idx, { enabled: on });
           render();
@@ -279,7 +298,7 @@
         site.builtin ? h('span') : h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Remove ' + site.host, title: 'Remove', onclick: async () => {
           const sites = state.settings.sites.filter((x, i) => i !== idx);
           await saveSettings({ sites });
-          chrome.permissions.remove({ origins: PM.sitePatterns(site.host) }).catch(() => {});
+          ext.permissions.remove({ origins: PM.sitePatterns(site.host) }).catch(() => {});
           render();
         } }, PM.icon('trash', 16)));
     };
@@ -300,18 +319,19 @@
           return;
         }
         const origins = PM.sitePatterns(host);
-        if (await chrome.permissions.contains({ origins })) {
-          await chrome.runtime.sendMessage({ type: 'pm:enableSite', host, openTab: true });
-        } else {
-          // The background worker finishes this in permissions.onAdded (the page may lose focus to the dialog).
-          await chrome.storage.local.set({ _pendingSite: { host, openTab: true, at: Date.now() } });
-          const ok = await chrome.permissions.request({ origins }).catch(() => false);
-          if (!ok) {
-            await chrome.storage.local.remove('_pendingSite');
-            msg.textContent = 'Prolly needs access to ' + host + ' to work there.';
-            return;
-          }
+        // Nothing is awaited before permissions.request(): Firefox only prompts straight from the click.
+        // The background script finishes this in permissions.onAdded (the page may lose focus to the dialog).
+        const had = ext.permissions.contains({ origins }).catch(() => false);
+        const pending = ext.storage.local.set({ _pendingSite: { host, openTab: true, at: Date.now() } });
+        const ok = await ext.permissions.request({ origins }).catch(() => false);
+        await pending;
+        if (!ok) {
+          await ext.storage.local.remove('_pendingSite');
+          msg.textContent = 'Prolly needs access to ' + host + ' to work there.';
+          return;
         }
+        // Access was already there, so permissions.onAdded will not fire: finish here.
+        if (await had) await ext.runtime.sendMessage({ type: 'pm:enableSite', host, openTab: true });
         state.flash = 'Added ' + host + '. A tab opened there — click the text area you want to use.';
       };
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); if (e.key === 'Escape') addWrap.replaceChildren(); });
@@ -334,7 +354,7 @@
           isDefault ? null : h('button', { type: 'button', class: 'btn quiet', onclick: async () => { await saveSettings({ shortcut: PM.DEFAULT_SHORTCUT }); render(); } }, 'Reset')),
         recHint,
         h('div', { class: 'note' }, h('b', null, 'Why ' + PM.shortcutLabel(PM.DEFAULT_SHORTCUT)),
-          h('span', null, 'One hand, no Shift, nothing typed into the text area, and Chrome leaves it free. Most AI chats keep their shortcuts on ⌘/Ctrl + K, /, Shift and Enter. Mac users get Control + ; rather than ⌘ + ;, because ⌘ shortcuts are the ones apps tend to claim.')),
+          h('span', null, 'One hand, no Shift, nothing typed into the text area, and ' + PM.BROWSER + ' leaves it free. Most AI chats keep their shortcuts on ⌘/Ctrl + K, /, Shift and Enter. Mac users get Control + ; rather than ⌘ + ;, because ⌘ shortcuts are the ones apps tend to claim.')),
         h('div', { class: 'row', style: { 'padding-top': '2px' } },
           h('div', { class: 'grow' },
             h('span', { style: { 'font-size': '14px', 'font-weight': '500' } }, 'Also open when I type ', h('span', { class: 'mono', style: { background: '#f1f0ed', 'border-radius': '4px', padding: '1px 5px' } }, ';;')),
@@ -403,37 +423,133 @@
       state.flash = null;
     }
     const n = state.prompts.length;
-    return [
-      h('h1', null, 'Sync & backup'),
-      h('section', { class: 'card' },
+    const onDrive = !!(state.drive && state.drive.connected);
+    const browserCard = h('section', { class: 'card' },
+      h('div', { class: 'row', style: { 'align-items': 'flex-start' } },
+        h('div', { class: 'grow', style: { gap: '4px' } },
+          h('div', { class: 'row', style: { gap: '8px' } }, h('h2', null, 'Sync with ' + PM.BROWSER), onDrive ? null : h('span', { class: 'pill free' }, 'Free')),
+          h('p', { class: 'sub', style: { 'max-width': '620px' } }, onDrive
+            ? 'Off while Google Drive is connected: Drive syncs your prompts instead.'
+            : PM.isFirefox
+              ? 'Your prompts follow your Mozilla account to every computer where you\'re signed in to Firefox with Add-ons turned on in Sync. Nothing to set up.'
+              : 'Your prompts follow your Chrome profile to every computer where you\'re signed in to Chrome with sync on. Nothing to set up.')),
+        onDrive ? null : switchEl(state.sync, 'Sync with ' + PM.BROWSER, toggleSync)),
+      h('div', { class: 'grow', style: { gap: '8px' } },
+        h('div', { class: 'row', style: { 'justify-content': 'space-between', 'font-size': '13px' } },
+          h('span', null, h('b', null, n + (n === 1 ? ' prompt' : ' prompts')), ' · ' + PM.formatBytes(u.bytes) + ' of ' + PM.formatBytes(u.quota) + (state.sync || onDrive ? '' : ' (this computer only)')),
+          h('span', { style: { color: 'var(--ok)' } }, lastEdit ? '✓ Saved · last edit ' + PM.timeAgo(lastEdit) : '')),
+        h('div', { class: 'meter' + (pct > 90 ? ' full' : '') }, h('div', { style: { width: pct + '%' } })),
+        h('p', { class: 'small' }, onDrive
+          ? 'Kept on this computer and in your Google Drive.'
+          : state.sync
+            ? PM.BROWSER + ' gives each extension 100 KB of synced space — a few hundred typical prompts. Long prompts are split into pieces automatically.'
+            : 'Sync is off: prompts are kept on this computer only. Turn it on to copy them into ' + PM.SYNC_NAME + ', or connect Google Drive below.')),
+      h('div', { class: 'note' }, h('b', null, 'Edited on two computers?'), h('span', null, 'The latest edit wins, and the other version is kept as “Title (copy)” so nothing is lost.')));
+    const backupCard = h('section', { class: 'card' },
+      h('div', { class: 'row' },
+        h('div', { class: 'grow' }, h('h2', null, 'Backup'), h('p', { class: 'sub' }, 'Save all prompts as one JSON file, or load a file to merge it into your library.')),
+        h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, 'Import…'),
+        h('button', { type: 'button', class: 'btn dark', onclick: exportJson }, 'Export JSON'),
+        file),
+      msg);
+    // Builds without a Google client ID don't offer Drive at all (shared/drive.js).
+    const driveCard = PM.drive.configured() ? renderDrive() : null;
+    return [h('h1', null, 'Sync & backup')].concat((onDrive ? [driveCard, browserCard, backupCard] : [browserCard, driveCard, backupCard]).filter(Boolean));
+  }
+
+  // ---------- Google Drive ----------
+  // Signing in happens here (it needs the click); syncing happens in the background script.
+  const driveCmd = async (op, extra) => {
+    const r = await ext.runtime.sendMessage(Object.assign({ type: 'pm:drive', op }, extra || {}));
+    if (r && r.state) state.drive = r.state;
+  };
+
+  function renderDrive() {
+    const d = state.drive || { connected: false };
+    const msg = h('p', { class: 'small', role: 'status' });
+    // A button that shows it is working, then re-renders; fn may return 'cancel' to do nothing.
+    const act = (label, busyLabel, fn, cls) => {
+      const b = h('button', { type: 'button', class: 'btn' + (cls ? ' ' + cls : '') }, label);
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        b.textContent = busyLabel;
+        try {
+          if ((await fn()) !== 'cancel') return refresh();
+        } catch (e) {
+          msg.className = 'err';
+          msg.textContent = (e && e.message) || String(e);
+        }
+        b.disabled = false;
+        b.textContent = label;
+      });
+      return b;
+    };
+    const title = (text, pill, pillClass) =>
+      h('div', { class: 'row', style: { gap: '8px' } }, h('h2', null, text), pill ? h('span', { class: 'pill ' + (pillClass || 'free') }, pill) : null);
+
+    if (!PM.drive.configured()) {
+      return h('section', { class: 'card dashed' },
+        h('div', { class: 'grow', style: { gap: '4px' } },
+          title('Google Drive', 'Setup needed', 'later'),
+          h('p', { class: 'sub' }, 'This build of Prolly has no Google client ID yet. Add one in shared/drive.js (see “Google Drive setup” in the README). The redirect URL to register for ' + PM.BROWSER + ' is:'),
+          h('p', { class: 'small mono', style: { 'word-break': 'break-all', 'user-select': 'all' } }, PM.drive.redirectURL() || 'not available in this browser')));
+    }
+
+    if (!d.connected) {
+      return h('section', { class: 'card' },
         h('div', { class: 'row', style: { 'align-items': 'flex-start' } },
           h('div', { class: 'grow', style: { gap: '4px' } },
-            h('div', { class: 'row', style: { gap: '8px' } }, h('h2', null, 'Sync with Chrome'), h('span', { class: 'pill free' }, 'Free')),
-            h('p', { class: 'sub', style: { 'max-width': '620px' } }, 'Your prompts follow your Chrome profile to every computer where you\'re signed in to Chrome with sync on. Nothing to set up.')),
-          switchEl(state.sync, 'Sync with Chrome', toggleSync)),
-        h('div', { class: 'grow', style: { gap: '8px' } },
-          h('div', { class: 'row', style: { 'justify-content': 'space-between', 'font-size': '13px' } },
-            h('span', null, h('b', null, n + (n === 1 ? ' prompt' : ' prompts')), ' · ' + PM.formatBytes(u.bytes) + ' of ' + PM.formatBytes(u.quota) + (state.sync ? '' : ' (this computer only)')),
-            h('span', { style: { color: 'var(--ok)' } }, lastEdit ? '✓ Saved · last edit ' + PM.timeAgo(lastEdit) : '')),
-          h('div', { class: 'meter' + (pct > 90 ? ' full' : '') }, h('div', { style: { width: pct + '%' } })),
-          h('p', { class: 'small' }, state.sync
-            ? 'Chrome gives each extension 100 KB of synced space — a few hundred typical prompts. Long prompts are split into pieces automatically.'
-            : 'Sync is off: prompts are kept on this computer only. Turn it on to copy them into Chrome sync.')),
-        h('div', { class: 'note' }, h('b', null, 'Edited on two computers?'), h('span', null, 'The latest edit wins, and the other version is kept as “Title (copy)” so nothing is lost.'))),
-      h('section', { class: 'card' },
-        h('div', { class: 'row' },
-          h('div', { class: 'grow' }, h('h2', null, 'Backup'), h('p', { class: 'sub' }, 'Save all prompts as one JSON file, or load a file to merge it into your library.')),
-          h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, 'Import…'),
-          h('button', { type: 'button', class: 'btn dark', onclick: exportJson }, 'Export JSON'),
-          file),
-        msg),
-      h('section', { class: 'card dashed' },
-        h('div', { class: 'row' },
-          h('div', { class: 'grow' },
-            h('div', { class: 'row', style: { gap: '8px' } }, h('h2', { style: { 'font-size': '14px' } }, 'Need more room?'), h('span', { class: 'pill later' }, 'Later')),
-            h('p', { class: 'sub' }, 'Sync through a hidden folder in your own Google Drive. Still free, far more space.')),
-          h('button', { type: 'button', class: 'btn', disabled: true }, 'Connect Google Drive')))
-    ];
+            title('Sync with Google Drive', 'Free'),
+            h('p', { class: 'sub', style: { 'max-width': '620px' } }, 'One Markdown file per prompt, in a “Prolly” folder in your own Drive: no 100 KB limit, and the same library in Chrome and Firefox. You can open the files, and Google Drive for desktop puts the folder on your computer. Prolly can see only the files it creates.')),
+          act('Connect Google Drive', 'Waiting for Google…', async () => {
+            await PM.drive.connect();
+            await driveCmd('connected');
+          }, 'dark')),
+        state.sync ? h('p', { class: 'small' }, 'Connecting turns off ' + PM.SYNC_NAME + ' on this computer: Google Drive takes over.') : null,
+        msg);
+    }
+
+    const e = d.lastError;
+    const status = [];
+    if (!e) {
+      status.push(h('span', { style: { color: 'var(--ok)', 'font-size': '13px' } }, d.lastSync ? '✓ Synced ' + PM.timeAgo(d.lastSync) : 'Syncing…'));
+    } else if (e.code === 'MASS_DELETE') {
+      status.push(
+        h('p', { class: 'err', style: { flex: '1 1 100%' } }, e.count + ' prompts were deleted from the Prolly folder in Drive. Sync is paused until you choose what to do with them here.'),
+        act('Put them back in Drive', 'Restoring…', () => driveCmd('resolve', { choice: 'restore' }), 'dark'),
+        act('Delete them here too', 'Deleting…', async () => {
+          if (!confirm('Delete these ' + e.count + ' prompts from Prolly on this computer too? If they were deleted by mistake, look in the bin in Google Drive first.')) return 'cancel';
+          await driveCmd('resolve', { choice: 'apply' });
+        }));
+    } else if (e.code === 'FOLDER_GONE') {
+      status.push(
+        h('p', { class: 'err', style: { flex: '1 1 100%' } }, e.message + ' Restore it from the bin in Drive and sync again, or start a new folder.'),
+        act('Start a new folder', 'Creating…', () => driveCmd('newFolder'), 'dark'));
+    } else if (e.code === 'AUTH' || e.code === 'SCOPE') {
+      status.push(
+        h('p', { class: 'err', style: { flex: '1 1 100%' } }, e.message),
+        act('Sign in again', 'Waiting for Google…', async () => {
+          await PM.drive.reauthorize();
+          await driveCmd('sync');
+        }, 'dark'));
+    } else {
+      status.push(h('p', { class: 'err' }, e.message + (d.lastSync ? ' Last synced ' + PM.timeAgo(d.lastSync) + '.' : '')));
+    }
+
+    return h('section', { class: 'card' },
+      h('div', { class: 'row', style: { 'align-items': 'flex-start' } },
+        h('div', { class: 'grow', style: { gap: '4px' } },
+          title('Google Drive', 'On'),
+          h('p', { class: 'sub' }, 'Connected as ', h('b', null, d.email || 'your Google account'), ' · ',
+            h('a', { href: PM.drive.folderURL(d.folderId), target: '_blank', rel: 'noopener' }, 'Open the Prolly folder'))),
+        act('Sync now', 'Syncing…', () => driveCmd('sync')),
+        act('Disconnect', 'Disconnecting…', async () => {
+          if (!confirm('Stop syncing with Google Drive on this computer? Your prompts stay in Prolly here, and the files stay in your Drive.')) return 'cancel';
+          await driveCmd('disconnect');
+        }, 'quiet')),
+      h('div', { class: 'row', style: { 'flex-wrap': 'wrap', gap: '8px' } }, status),
+      h('p', { class: 'small' }, 'Checks for changes every 5 minutes and a few seconds after you edit. A prompt you delete goes to the bin in Drive.'),
+      msg);
   }
 
   // ---------- Boot ----------
@@ -449,8 +565,28 @@
     render();
     main.focus({ preventScroll: true });
   });
+  // "Review & import" on a chat page: background.js asks an open settings page first.
+  ext.runtime.onMessage.addListener((msg, sender, respond) => {
+    if (!msg || msg.type !== 'pm:showImport') return;
+    (async () => {
+      if (location.hash !== '#import') location.hash = '#import';
+      else render();
+      await PM.importScreen.takePending();
+      const tab = ext.tabs && ext.tabs.getCurrent ? await ext.tabs.getCurrent() : null;
+      if (tab) {
+        await ext.tabs.update(tab.id, { active: true }).catch(() => {});
+        if (ext.windows && tab.windowId != null) await ext.windows.update(tab.windowId, { focused: true }).catch(() => {});
+      }
+    })().then(() => respond({ ok: true }), () => respond({ ok: false }));
+    return true;
+  });
   let pending = 0;
   PM.store.onChanged(() => {
+    clearTimeout(pending);
+    pending = setTimeout(refresh, 150);
+  });
+  ext.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes._drive) return;
     clearTimeout(pending);
     pending = setTimeout(refresh, 150);
   });
@@ -459,9 +595,14 @@
     if (state.section === 'appearance') render();
   });
 
+  if (PM.drive.configured()) document.getElementById('sideNote').textContent = 'Free forever. No account and no server of ours — prompts live in your browser, its built-in sync, or your own Google Drive.';
+
   (async () => {
     setSection();
     await load();
     render();
+    if (state.section === 'import') await PM.importScreen.takePending();
+    // Opening settings pulls in what changed in Drive since the last check.
+    if (state.drive && state.drive.connected && Date.now() - (state.drive.lastSync || 0) > 60000) driveCmd('sync').catch(() => {});
   })();
 })();
