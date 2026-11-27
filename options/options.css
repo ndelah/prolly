@@ -101,6 +101,50 @@ p { margin: 0; }
 .varpill { font: 11px var(--mono); color: #1d4ed8; background: #e9effd; border-radius: 5px; padding: 2px 6px; }
 .empty { padding: 28px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed var(--line2); border-radius: 12px; }
 
+/* Shared bits used by Import from AI and the start card */
+a.btn { text-decoration: none; }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.note.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.warn { color: var(--warn); background: var(--warn-bg); }
+.pill.danger { color: var(--danger); background: #fdecea; }
+.pill.acc { color: #1d4ed8; background: #e9effd; }
+.crumbs { font-size: 12.5px; color: var(--muted); }
+.crumbs a { color: var(--muted); text-decoration: none; }
+.crumbs a:hover { color: var(--text); text-decoration: underline; }
+.steps { margin: 2px 0 0; padding-left: 20px; font-size: 13px; color: var(--muted); line-height: 1.75; }
+.steps b { color: var(--text); font-weight: 600; }
+.linkbtn { border: 0; background: none; padding: 0; margin-left: 4px; color: var(--link); font: inherit; cursor: pointer; text-decoration: underline; }
+
+/* Import from AI */
+.imp { display: flex; flex-direction: column; gap: 20px; }
+.imp-paste { height: auto; min-height: 96px; padding: 10px 12px; font: 12.5px/1.5 var(--mono); resize: vertical; }
+.imp-row { cursor: default; align-items: flex-start; }
+.imp-row > .imp-check { margin-top: 6px; }
+.imp-row .lib-main { gap: 3px; }
+.imp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 3px; }
+.imp-row:hover { background: transparent; }
+.imp-row.is-off .lib-ico, .imp-row.is-off .lib-main { opacity: 0.55; }
+.imp-check { width: 16px; height: 16px; flex: none; margin: 0; accent-color: #17181c; cursor: pointer; }
+.imp-title-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.imp-title-line .lib-title { min-width: 0; cursor: pointer; }
+.imp-title-line .pill { flex: none; }
+.imp-folder { color: var(--text); }
+.imp-issue { font-size: 12.5px; color: var(--warn); }
+.imp-issue.danger { color: var(--danger); }
+.imp-more { color: var(--muted); }
+.imp-side { flex: none; display: flex; align-items: center; gap: 2px; }
+.imp-select { height: 26px; padding: 0 4px; font-size: 12px; }
+.imp-filters { flex-wrap: wrap; }
+.imp-filters button { display: inline-flex; align-items: center; gap: 6px; }
+.imp-n { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.imp-removed summary { cursor: pointer; padding: 4px 2px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.imp-removed .lib-list { margin-top: 6px; }
+.imp-footer { position: sticky; bottom: 12px; z-index: 1; display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 12px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 6px 24px rgba(20, 20, 25, 0.1); }
+.imp-footer-text { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.imp-footer-text b { color: var(--text); font-weight: 600; }
+.imp-picks { display: flex; gap: 2px; }
+.imp-result h2 { font-size: 17px; outline: none; }
+
 /* Appearance */
 .ap { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
 .ap-controls { width: 276px; flex: none; gap: 20px; padding: 18px; }
@@ -127,4 +171,5 @@ p { margin: 0; }
   .tr { grid-template-columns: minmax(0, 1fr) 120px 46px 32px; }
   .tr > :nth-child(2), .tr > :nth-child(3) { display: none; }
   .ap-controls { width: 100%; }
+  .imp-footer .btn.dark { width: 100%; justify-content: center; }
 }

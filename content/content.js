@@ -553,6 +553,82 @@
     }
   }
 
+  // ---------- Import block in a reply ----------
+  // The setup prompt asks the AI for a ~~~~prolly block. When one shows up in a reply (and has stopped
+  // changing, so streaming is over), offer to open it on the import screen. Reads code blocks only.
+  const IMPORT_HEAD = /^[ \t]*prolly[- ]import\s+v\d/im;
+  const IMPORT_SEP = /^[ \t]*={2,}\s*(?:PROMPT|MODIFIER)\s*={2,}[ \t]*$/gim;
+  const SETUP_EXAMPLE = 'Turn these meeting notes into a list of action items with an owner and due date for each.';
+  const importLast = new WeakMap(); // <pre> -> text at the last scan
+  let importBar = null, importTimer = 0, importDismissed = '';
+
+  function importBlocks() {
+    const out = [];
+    document.querySelectorAll('pre').forEach((pre) => {
+      if (pre.closest('textarea, [contenteditable="true"], [contenteditable=""]')) return;
+      const code = pre.querySelector('code') || pre;
+      let text = code.textContent || '';
+      const m = IMPORT_HEAD.exec(text);
+      if (!m) return;
+      text = text.slice(m.index).replace(/^\s+/, '');
+      const entries = (text.match(IMPORT_SEP) || []).length;
+      // One entry with the setup prompt's example sentence is the example, shown in your own message.
+      if (!entries || (entries === 1 && text.indexOf(SETUP_EXAMPLE) >= 0)) return;
+      out.push({ pre, text, entries });
+    });
+    return out;
+  }
+  function queueImportScan() {
+    if (!importTimer) importTimer = setTimeout(scanImport, 1200);
+  }
+  function scanImport() {
+    importTimer = 0;
+    if (!activeHere()) return hideImportBar();
+    let settling = false;
+    const blocks = importBlocks().filter((b) => {
+      const same = importLast.get(b.pre) === b.text;
+      importLast.set(b.pre, b.text);
+      if (!same) settling = true;
+      return same;
+    });
+    if (settling) queueImportScan();
+    const sig = blocks.map((b) => b.text.length + ':' + b.text.slice(-60)).join('|');
+    if (!blocks.length || sig === importDismissed) return hideImportBar();
+    if (importBar && importBar.getAttribute('data-sig') === sig) return;
+    showImportBar(blocks, sig);
+  }
+  function hideImportBar() {
+    if (importBar) importBar.remove();
+    importBar = null;
+  }
+  function showImportBar(blocks, sig) {
+    hideImportBar();
+    mount();
+    const n = blocks.reduce((sum, b) => sum + b.entries, 0);
+    const label = h('span', null, h('b', null, 'Prolly'), ' found ' + n + (n === 1 ? ' prompt' : ' prompts') + (blocks.length > 1 ? ' in ' + blocks.length + ' replies.' : ' in this reply.'));
+    const go = h('button', { type: 'button', class: 'pm-btn is-primary' }, 'Review & import');
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      try {
+        await ext.runtime.sendMessage({ type: 'pm:importText', texts: blocks.map((b) => b.text) });
+        importDismissed = sig;
+        label.replaceChildren('Opened in Prolly ✓');
+        go.remove();
+        setTimeout(() => importBar && importBar.getAttribute('data-sig') === sig && hideImportBar(), 3000);
+      } catch (e) {
+        label.replaceChildren('Prolly was updated. Reload this page to import.');
+        go.remove();
+      }
+    });
+    const close = h('button', { type: 'button', class: 'pm-importbar-x', 'aria-label': 'Dismiss', title: 'Dismiss' }, PM.icon('x', 14));
+    close.addEventListener('click', () => {
+      importDismissed = sig;
+      hideImportBar();
+    });
+    importBar = h('div', { class: 'pm-importbar', role: 'status', 'data-sig': sig }, h('span', { class: 'pm-logo' }, '#'), label, go, close);
+    layer.appendChild(importBar);
+  }
+
   // ---------- Global listeners ----------
   // Registered at document_start, so this runs before the page's own key handlers.
   window.addEventListener('keydown', (e) => {
@@ -652,5 +728,8 @@
 
   ready.then(() => {
     if (activeHere()) ext.runtime.sendMessage({ type: 'pm:active' }).catch(() => {});
+    new MutationObserver(() => activeHere() && queueImportScan())
+      .observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    queueImportScan();
   });
 })();

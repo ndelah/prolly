@@ -267,6 +267,9 @@
       list.unshift(id);
       await S.local.set({ _recent: list.slice(0, 10) });
     },
+    async setRecent(ids) {
+      await S.local.set({ _recent: ids.filter((x) => typeof x === 'string').slice(0, 10) });
+    },
 
     async usage() {
       const on = await syncOn();

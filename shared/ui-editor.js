@@ -1,6 +1,7 @@
 // Create / edit a prompt: title, folder, tags, text with #variables#, defaults per variable.
 // Keys: Ctrl/⌘ + ↵ save · esc cancel · ↵ adds a tag
 // Events: onSave(data) -> Promise, onCancel(), onDelete(id) -> Promise
+// Labels (optional, for the import screen): o.labels = { heading, save, del, delConfirm }
 (function () {
   'use strict';
   const PM = (globalThis.PM = globalThis.PM || {});
@@ -28,6 +29,7 @@
       this.folders = PM.folderIndex ? PM.folderIndex(o.prompts || []).map((f) => PM.folderLabel(f.id)) : [];
       this.confirmDelete = false;
       this.saving = false;
+      this.labels = Object.assign({ heading: this.isNew ? 'New prompt' : 'Edit prompt', save: 'Save prompt', del: 'Delete', delConfirm: 'Click again to delete' }, o.labels || {});
       this.build();
       this.renderTags();
       this.renderVars();
@@ -68,14 +70,14 @@
       this.varsBox = h('div');
       this.err = h('div', { class: 'pm-err', role: 'alert', hidden: true });
 
-      this.saveBtn = h('button', { type: 'button', class: 'pm-btn is-primary', onclick: () => this.save() }, 'Save prompt', k(PM.isMac ? '⌘↵' : 'Ctrl ↵'));
-      this.deleteBtn = this.isNew ? null : h('button', { type: 'button', class: 'pm-btn is-danger', onclick: () => this.del() }, PM.icon('trash', 15), 'Delete');
+      this.saveBtn = h('button', { type: 'button', class: 'pm-btn is-primary', onclick: () => this.save() }, this.labels.save, k(PM.isMac ? '⌘↵' : 'Ctrl ↵'));
+      this.deleteBtn = this.isNew ? null : h('button', { type: 'button', class: 'pm-btn is-danger', onclick: () => this.del() }, PM.icon('trash', 15), this.labels.del);
 
-      this.panel = h('div', { class: 'pm-panel pm-editor', role: 'dialog', tabIndex: -1, 'aria-modal': 'true', 'aria-label': this.isNew ? 'New prompt' : 'Edit prompt' },
+      this.panel = h('div', { class: 'pm-panel pm-editor', role: 'dialog', tabIndex: -1, 'aria-modal': 'true', 'aria-label': this.labels.heading },
         h('div', { class: 'pm-ed-head' },
           h('span', { class: 'pm-logo' }, '#'),
           h('span', { class: 'pm-crumb' }, 'Prolly /'),
-          h('span', { class: 'pm-ed-title' }, this.isNew ? 'New prompt' : 'Edit prompt'),
+          h('span', { class: 'pm-ed-title' }, this.labels.heading),
           h('span', { class: 'pm-push pm-kbd-chip' }, 'esc')),
         h('div', { class: 'pm-ed-body' },
           h('div', { class: 'pm-fl' }, h('label', { class: 'pm-lbl', for: ids.title }, 'Title'), this.titleInput),
@@ -268,7 +270,7 @@
     async del() {
       if (!this.confirmDelete) {
         this.confirmDelete = true;
-        this.deleteBtn.replaceChildren(PM.icon('trash', 15), 'Click again to delete');
+        this.deleteBtn.replaceChildren(PM.icon('trash', 15), this.labels.delConfirm);
         return;
       }
       try {

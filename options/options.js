@@ -42,9 +42,10 @@
 
   function setSection() {
     const s = (location.hash || '#library').slice(1);
-    state.section = ['library', 'appearance', 'sites', 'sync'].indexOf(s) >= 0 ? s : 'library';
+    state.section = ['library', 'import', 'appearance', 'sites', 'sync'].indexOf(s) >= 0 ? s : 'library';
+    const nav = state.section === 'import' ? 'library' : state.section;
     document.querySelectorAll('.side a').forEach((a) => {
-      const on = a.getAttribute('data-sec') === state.section;
+      const on = a.getAttribute('data-sec') === nav;
       a.classList.toggle('on', on);
       if (on) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
@@ -53,7 +54,7 @@
 
   function render() {
     stopRecording();
-    const f = { library: renderLibrary, appearance: renderAppearance, sites: renderSites, sync: renderSync }[state.section];
+    const f = { library: renderLibrary, import: renderImport, appearance: renderAppearance, sites: renderSites, sync: renderSync }[state.section];
     main.replaceChildren();
     PM.append(main, f());
   }
@@ -119,6 +120,7 @@
         h('span', { class: 'lib-side' }, p.tags.slice(0, 3).map((t) => h('span', { class: 'tagpill' }, t)), vars ? h('span', { class: 'varpill' }, vars + (vars === 1 ? ' var' : ' vars')) : null));
     };
     const sc = PM.shortcutLabel(state.settings.shortcut);
+    const onlySetup = state.prompts.length <= 1 && state.prompts.every((p) => p.title === PM.SETUP_PROMPT.title);
     let body;
     if (!state.prompts.length) {
       body = h('div', { class: 'empty' }, h('p', null, 'No prompts yet.'), h('p', { class: 'small', style: { 'margin-top': '6px' } }, 'Create one, and write #name# wherever a value changes each time.'));
@@ -135,10 +137,26 @@
         h('h1', null, 'Library'),
         h('span', { style: { flex: '1' } }),
         search,
+        h('a', { class: 'btn', href: '#import' }, 'Import from AI'),
         h('button', { type: 'button', class: 'btn dark', onclick: () => openEditor(null, { title: state.query.trim() }) }, '+ New prompt')),
-      h('div', { class: 'note' }, h('b', null, 'Tip'), h('span', null, 'In ChatGPT, Claude, Gemini or any site you add, click into the message box and press ' + sc + (state.settings.typedTrigger ? ' (or type ;;)' : '') + ' to open your prompts.')),
+      onlySetup
+        ? h('section', { class: 'card start' },
+          h('div', { class: 'row', style: { 'align-items': 'flex-start', 'flex-wrap': 'wrap' } },
+            h('div', { class: 'grow', style: { gap: '6px' } },
+              h('h2', null, 'Start with the prompts you already use'),
+              h('ol', { class: 'steps' },
+                h('li', null, 'Open ChatGPT, Claude or Gemini, click into the message box and press ', h('b', null, sc), (state.settings.typedTrigger ? ' (or type ;;)' : '') + '.'),
+                h('li', null, 'Pick “' + PM.SETUP_PROMPT.title + '” and press Enter. The AI looks at how you prompt and writes your library.'),
+                h('li', null, 'Click Review & import under its reply, check what it found, and import.'))),
+            h('a', { class: 'btn', href: '#import' }, 'Paste a reply instead')))
+        : h('div', { class: 'note' }, h('b', null, 'Tip'), h('span', null, 'In ChatGPT, Claude, Gemini or any site you add, click into the message box and press ' + sc + (state.settings.typedTrigger ? ' (or type ;;)' : '') + ' to open your prompts.')),
       body
     ];
+  }
+
+  // ---------- Import from AI (options/import.js) ----------
+  function renderImport() {
+    return PM.importScreen.render({ prompts: state.prompts, settings: state.settings, layer, refresh });
   }
 
   // ---------- Appearance ----------
@@ -434,8 +452,9 @@
         h('button', { type: 'button', class: 'btn dark', onclick: exportJson }, 'Export JSON'),
         file),
       msg);
-    const driveCard = renderDrive();
-    return [h('h1', null, 'Sync & backup')].concat(onDrive ? [driveCard, browserCard, backupCard] : [browserCard, driveCard, backupCard]);
+    // Builds without a Google client ID don't offer Drive at all (shared/drive.js).
+    const driveCard = PM.drive.configured() ? renderDrive() : null;
+    return [h('h1', null, 'Sync & backup')].concat((onDrive ? [driveCard, browserCard, backupCard] : [browserCard, driveCard, backupCard]).filter(Boolean));
   }
 
   // ---------- Google Drive ----------
@@ -546,6 +565,21 @@
     render();
     main.focus({ preventScroll: true });
   });
+  // "Review & import" on a chat page: background.js asks an open settings page first.
+  ext.runtime.onMessage.addListener((msg, sender, respond) => {
+    if (!msg || msg.type !== 'pm:showImport') return;
+    (async () => {
+      if (location.hash !== '#import') location.hash = '#import';
+      else render();
+      await PM.importScreen.takePending();
+      const tab = ext.tabs && ext.tabs.getCurrent ? await ext.tabs.getCurrent() : null;
+      if (tab) {
+        await ext.tabs.update(tab.id, { active: true }).catch(() => {});
+        if (ext.windows && tab.windowId != null) await ext.windows.update(tab.windowId, { focused: true }).catch(() => {});
+      }
+    })().then(() => respond({ ok: true }), () => respond({ ok: false }));
+    return true;
+  });
   let pending = 0;
   PM.store.onChanged(() => {
     clearTimeout(pending);
@@ -561,10 +595,13 @@
     if (state.section === 'appearance') render();
   });
 
+  if (PM.drive.configured()) document.getElementById('sideNote').textContent = 'Free forever. No account and no server of ours — prompts live in your browser, its built-in sync, or your own Google Drive.';
+
   (async () => {
     setSection();
     await load();
     render();
+    if (state.section === 'import') await PM.importScreen.takePending();
     // Opening settings pulls in what changed in Drive since the last check.
     if (state.drive && state.drive.connected && Date.now() - (state.drive.lastSync || 0) > 60000) driveCmd('sync').catch(() => {});
   })();

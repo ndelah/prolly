@@ -1,9 +1,9 @@
 // Background script: registers the content script on sites you add, finishes "Use Prolly on this site",
-// keeps a copy of a prompt edited on two computers at once, syncs with Google Drive, and seeds starter
-// prompts on install.
+// keeps a copy of a prompt edited on two computers at once, syncs with Google Drive, seeds the setup
+// prompt on install, and opens the import screen for an import block found on a chat page.
 // Chrome runs it as a service worker and loads the shared files here. Firefox runs it as an event page
 // and its manifest lists the shared files before this one (see scripts/firefox-manifest.js).
-if (typeof importScripts === 'function') importScripts('shared/core.js', 'shared/template.js', 'shared/store.js', 'shared/mdfile.js', 'shared/filesync.js', 'shared/drive.js');
+if (typeof importScripts === 'function') importScripts('shared/core.js', 'shared/template.js', 'shared/store.js', 'shared/mdfile.js', 'shared/filesync.js', 'shared/drive.js', 'shared/onboarding.js');
 const PM = self.PM;
 
 const CONTENT_JS = [
@@ -206,6 +206,13 @@ ext.storage.onChanged.addListener((changes, area) => {
 });
 
 // ---------- Messages from the popup, options page and content script ----------
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname;
+  } catch (e) {
+    return '';
+  }
+};
 ext.runtime.onMessage.addListener((msg, sender, respond) => {
   if (!msg || typeof msg.type !== 'string') return;
   if (msg.type === 'pm:active' && sender.tab) {
@@ -223,6 +230,19 @@ ext.runtime.onMessage.addListener((msg, sender, respond) => {
     serial(() => driveCommand(msg)).then((state) => respond({ ok: true, state }));
     return true;
   }
+  // An import block the content script found on a chat page: hand it to the import screen.
+  if (msg.type === 'pm:importText' && Array.isArray(msg.texts) && msg.texts.length) {
+    serial(async () => {
+      const texts = msg.texts.filter((t) => typeof t === 'string').slice(0, 20).map((t) => t.slice(0, 500000));
+      await ext.storage.local.set({ _pendingImport: { texts, host: hostOf(sender.url), at: Date.now() } });
+      // An open settings page answers and shows the import screen itself; otherwise open one.
+      const shown = await ext.runtime.sendMessage({ type: 'pm:showImport' }).catch(() => null);
+      if (!(shown && shown.ok)) {
+        await ext.tabs.create({ url: ext.runtime.getURL('options/options.html#import'), index: sender.tab ? sender.tab.index + 1 : undefined });
+      }
+    }).then(() => respond({ ok: true }));
+    return true;
+  }
   if (msg.type === 'pm:inject' && typeof msg.tabId === 'number') {
     injectInto(msg.tabId).then((ok) => respond({ ok }));
     return true;
@@ -230,15 +250,8 @@ ext.runtime.onMessage.addListener((msg, sender, respond) => {
 });
 
 // ---------- Install ----------
-const SEED = [
-  { title: 'Code review', folder: 'Dev', tags: ['review', 'code'], text: 'Review this #language# code for bugs, security issues and readability. Pay special attention to #focus#.\n\nWhere it helps, suggest more idiomatic #language# alternatives. Return the findings as a #format:numbered list|table|checklist#, ordered by severity.' },
-  { title: 'Explain like a senior engineer', folder: 'Dev', tags: ['learning'], text: 'Explain #concept# as if I were a #level:junior|mid-level|senior# developer. Use one concrete example from #domain#, then list the three mistakes people make most often.' },
-  { title: 'Write unit tests', folder: 'Dev/Testing', tags: ['testing'], text: 'Write #framework# unit tests for the function below. Cover the happy path, empty inputs and #edge_case#. Explain each test in one line.' },
-  { title: 'Commit message from diff', folder: 'Dev', tags: ['git'], text: 'Write a conventional commit message for the diff below. Subject under 72 characters, then a short body explaining why, not what.' },
-  { title: 'Translate & localize', folder: 'Writing', tags: ['translation'], text: 'Translate the text below into #language#, keeping a #tone:formal|friendly|playful# tone. Flag any idiom that does not carry over and suggest a local equivalent.' },
-  { title: 'Summarize a paper', folder: 'Research', tags: ['summary'], text: 'Summarize this paper in #length:one paragraph|five bullets|one page# for a #audience# audience. Start with the main claim, then the method, then the limitations the authors admit.' },
-  { title: 'Meeting notes → action items', folder: 'Ops', tags: ['meetings'], text: 'Turn the notes below into action items. For each one give an owner, a due date if mentioned, and a one-line description. Group them by person.' }
-];
+// A new library starts with one prompt: it asks the AI to write the prompts you reuse as an import block.
+const SEED = [PM.SETUP_PROMPT];
 
 ext.runtime.onInstalled.addListener((details) =>
   serial(async () => {

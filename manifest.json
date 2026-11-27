@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Prolly — prompt manager for AI chats",
   "short_name": "Prolly",
-  "version": "1.1.0",
+  "version": "1.3.0",
   "description": "Save prompts with #variables#, then insert them into any AI chat with Ctrl + ;. Free sync through Chrome.",
   "minimum_chrome_version": "116",
   "icons": {
